@@ -1,0 +1,11 @@
+#cloud-config
+users:
+  - name: rocky
+    groups: [wheel]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    ssh_authorized_keys: ${jsonencode(ssh_keys)}
+packages:
+  - qemu-guest-agent
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent]
