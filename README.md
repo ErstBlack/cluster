@@ -31,8 +31,10 @@ on existing VMs.
 
 `node_count` is 1 to 9. The network reserves all nine MAC/IP slots, so scaling only adds or removes VMs.
 Changing `disk_gib` rebuilds every VM with a fresh disk and loses guest data, the same as an image swap.
-State and the generated cloud-init ISOs (`.tmp/`) stay local and are gitignored. Deleting `.tmp/`
-makes the next plan replace the seed volumes.
+State and the generated cloud-init ISOs live in `/srv/rocky-cluster` on this host, outside the
+checkout, so every checkout and session shares one state and its lock. Create it once with
+`sudo install -d -o $USER -m 0700 /srv/rocky-cluster`. Deleting `/srv/rocky-cluster/tmp` makes the
+next plan replace the seed volumes.
 
 ## Access
 
