@@ -9,9 +9,9 @@ through the `vcows` entry in `~/.ssh/config`.
 | Rocky-Cluster-N | `52:54:00:c1:00:0N` | `192.168.150.1N` |
 
 Each VM has 4 vCPU (host-passthrough), 4 GiB RAM, a 20 GiB thin qcow2 overlay on a shared base image,
-UEFI with Secure Boot off, VNC and a serial console, and `qemu-guest-agent`. The VMs sit on their own
-NAT network `rocky-cluster` (192.168.150.0/24). Every volume tofu creates in the `images` pool is
-prefixed `rocky-cluster-`.
+UEFI with Secure Boot on (Microsoft keys enrolled, so Rocky's signed shim verifies), VNC and a serial
+console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-cluster`
+(192.168.150.0/24). Every volume tofu creates in the `images` pool is prefixed `rocky-cluster-`.
 
 ## Use
 

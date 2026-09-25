@@ -119,19 +119,21 @@ resource "libvirt_domain" "node" {
   memory_unit = "MiB"
   running     = true
 
-  cpu      = { mode = "host-passthrough" }
-  features = { acpi = true, apic = {} }
+  cpu = { mode = "host-passthrough" }
+  # The sb-enrolled OVMF build requires SMM.
+  features = { acpi = true, apic = {}, smm = { state = "on" } }
 
   os = {
     type         = "hvm"
     type_arch    = "x86_64"
     type_machine = "q35"
     firmware     = "efi"
-    # Order matches libvirt's read-back; autoselection adds enrolled-keys when secure-boot is off.
+    # Secure Boot with Microsoft keys enrolled, so Rocky's signed shim verifies.
+    # Order matches libvirt's read-back.
     firmware_info = {
       features = [
-        { name = "enrolled-keys", enabled = "no" },
-        { name = "secure-boot", enabled = "no" },
+        { name = "enrolled-keys", enabled = "yes" },
+        { name = "secure-boot", enabled = "yes" },
       ]
     }
   }
