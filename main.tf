@@ -4,6 +4,10 @@ terraform {
       source  = "dmacvicar/libvirt"
       version = "~> 0.9.9"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.7"
+    }
   }
 }
 
@@ -38,6 +42,15 @@ locals {
     }
   }
   nodes = { for k, v in local.slots : k => v if tonumber(k) <= var.node_count }
+
+  # Node 1 initializes the RKE2 cluster and every other node joins it. All nodes are servers.
+  init_ip          = local.slots["1"].ip
+  rancher_hostname = "rancher.${local.init_ip}.sslip.io"
+}
+
+resource "random_password" "rke2_token" {
+  length  = 48
+  special = false
 }
 
 resource "libvirt_network" "cluster" {
@@ -94,7 +107,13 @@ resource "libvirt_cloudinit_disk" "seed" {
   for_each = local.nodes
 
   name      = "${each.value.hostname}-seed"
-  user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", { ssh_keys = local.ssh_keys })
+  user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
+    ssh_keys         = local.ssh_keys
+    token            = random_password.rke2_token.result
+    node_ip          = each.value.ip
+    server           = each.key == "1" ? "" : "https://${local.init_ip}:9345"
+    rancher_hostname = local.rancher_hostname
+  })
   meta_data = yamlencode({
     instance-id    = each.value.hostname
     local-hostname = each.value.hostname
