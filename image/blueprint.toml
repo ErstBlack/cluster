@@ -6,7 +6,7 @@ description = "Rocky 10 with RKE2, cert-manager and Rancher staged for first boo
 version = "0.1.0"
 
 # RKE2 1.36 is the newest minor Rancher v2.15.2 supports (chart kubeVersion < 1.37.0-0).
-# Comes from the rpm.rancher.io --extra-repo URLs in build.sh.
+# Comes from the rpm.rancher.io repos in rocky-10.2.json, GPG checked at build time.
 [[packages]]
 name = "rke2-server"
 version = "1.36.4~rke2r1"
