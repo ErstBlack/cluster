@@ -1,0 +1,86 @@
+# Rocky 10 golden image with RKE2 staged. Cloud-init writes /etc/rancher/rke2/config.yaml and starts
+# rke2-server at first boot. RKE2 then applies the HelmCharts below. Build with image/build.sh.
+# The qcow2 image type already brings cloud-init and shim-x64 and leaves out firewalld.
+name = "rocky-rke2"
+description = "Rocky 10 with RKE2, cert-manager and Rancher staged for first boot"
+version = "0.1.0"
+
+# RKE2 1.36 is the newest minor Rancher v2.15.2 supports (chart kubeVersion < 1.37.0-0).
+# Comes from the rpm.rancher.io repos in rocky-10.2.json, GPG checked at build time.
+[[packages]]
+name = "rke2-server"
+version = "1.36.4~rke2r1"
+
+[[packages]]
+name = "rke2-selinux"
+version = "0.23"
+
+# EL10 ships the iptables modules the CNI needs (xt_conntrack, iptable_nat, ip_set) in this package.
+[[packages]]
+name = "kernel-modules-extra"
+
+[[packages]]
+name = "qemu-guest-agent"
+
+# rke2-server stays disabled: it must not start before cloud-init writes the token.
+[customizations.services]
+enabled = ["qemu-guest-agent"]
+
+# Build-time repos are not copied into the image. These let the node update RKE2 with GPG checks.
+[[customizations.repositories]]
+id = "rancher-rke2-common-stable"
+name = "Rancher RKE2 Common (stable)"
+baseurls = ["https://rpm.rancher.io/rke2/stable/common/centos/10/noarch"]
+gpgkeys = ["https://rpm.rancher.io/public.key"]
+gpgcheck = true
+
+[[customizations.repositories]]
+id = "rancher-rke2-1.36-stable"
+name = "Rancher RKE2 1.36 (stable)"
+baseurls = ["https://rpm.rancher.io/rke2/stable/1.36/centos/10/x86_64"]
+gpgkeys = ["https://rpm.rancher.io/public.key"]
+gpgcheck = true
+
+# The RPMs do not create this directory. Without mode/user/group an existing one is fine.
+[[customizations.directories]]
+path = "/var/lib/rancher/rke2/server/manifests"
+ensure_parents = true
+
+# ponytail: charts and images are pulled at runtime over the NAT network, since blueprint files are
+# text only. Airgap tarballs in /var/lib/rancher/rke2/agent/images/ need a post-build step (or the
+# pxe-tar-xz squashfs build) once nodes lose internet.
+[[customizations.files]]
+path = "/var/lib/rancher/rke2/server/manifests/cert-manager.yaml"
+data = '''
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cert-manager
+  namespace: kube-system
+spec:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  version: v1.21.2
+  targetNamespace: cert-manager
+  createNamespace: true
+  valuesContent: |-
+    crds:
+      enabled: true
+'''
+
+# The hostname comes from a HelmChartConfig named rancher that cloud-init writes at first boot.
+[[customizations.files]]
+path = "/var/lib/rancher/rke2/server/manifests/rancher.yaml"
+data = '''
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: rancher
+  namespace: kube-system
+spec:
+  repo: https://releases.rancher.com/server-charts/stable
+  chart: rancher
+  version: 2.15.2
+  targetNamespace: cattle-system
+  createNamespace: true
+'''

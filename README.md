@@ -8,7 +8,7 @@ through the `vcows` entry in `~/.ssh/config`.
 |---|---|---|
 | Rocky-Cluster-N | `52:54:00:c1:00:0N` | `192.168.150.1N` |
 
-Each VM has 4 vCPU (host-passthrough), 4 GiB RAM, a 20 GiB thin qcow2 overlay on a shared base image,
+Each VM has 4 vCPU (host-passthrough), 8 GiB RAM, a 20 GiB thin qcow2 overlay on a shared base image,
 UEFI with Secure Boot on (Microsoft keys enrolled, so Rocky's signed shim verifies), VNC and a serial
 console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-cluster`
 (192.168.150.0/24). Every volume tofu creates in the `images` pool is prefixed `rocky-cluster-`.
@@ -31,8 +31,10 @@ on existing VMs.
 
 `node_count` is 1 to 9. The network reserves all nine MAC/IP slots, so scaling only adds or removes VMs.
 Changing `disk_gib` rebuilds every VM with a fresh disk and loses guest data, the same as an image swap.
-State and the generated cloud-init ISOs (`.tmp/`) stay local and are gitignored. Deleting `.tmp/`
-makes the next plan replace the seed volumes.
+State and the generated cloud-init ISOs live in `/srv/rocky-cluster` on this host, outside the
+checkout, so every checkout and session shares one state and its lock. Create it once with
+`sudo install -d -o $USER -m 0700 /srv/rocky-cluster`. Deleting `/srv/rocky-cluster/tmp` makes the
+next plan replace the seed volumes.
 
 ## Access
 
@@ -53,5 +55,19 @@ rebuilds every VM from scratch: overlays and domains are destroyed and re-create
 ./tofu.sh apply -var base_image_url=https://example/rocky10-custom.qcow2
 ```
 
-Open-source build options: `virt-customize` / `virt-builder` (libguestfs) on top of GenericCloud, or
-osbuild `image-builder` / `kiwi` from scratch.
+## RKE2 golden image
+
+`image/build.sh` builds `image/output/rocky-rke2.qcow2` (gitignored) from `image/blueprint.toml` with
+osbuild `image-builder` in a pinned, privileged root podman container. The image carries `rke2-server`
+(disabled), `rke2-selinux`, `kernel-modules-extra`, `qemu-guest-agent`, and HelmCharts for cert-manager
+and Rancher in `/var/lib/rancher/rke2/server/manifests/`.
+
+At first boot cloud-init writes `/etc/rancher/rke2/config.yaml` (token, `tls-san`, and `server:` on nodes
+2 and up) and starts `rke2-server`. Node 1 initializes the cluster and all nodes are servers. Rancher is
+served at `https://rancher.192.168.150.11.sslip.io`. Nodes pull charts and container images at runtime.
+The cloud-init needs this image. The GenericCloud default has no RKE2.
+
+```sh
+image/build.sh
+./tofu.sh apply -var base_image_url=/work/image/output/rocky-rke2.qcow2
+```

@@ -25,7 +25,7 @@ variable "vcpu" {
 
 variable "memory_mib" {
   type    = number
-  default = 4096
+  default = 8192
 }
 
 variable "disk_gib" {

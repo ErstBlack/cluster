@@ -5,7 +5,29 @@ users:
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     shell: /bin/bash
     ssh_authorized_keys: ${jsonencode(ssh_keys)}
-packages:
-  - qemu-guest-agent
+# Needs the image/ golden image: it carries rke2-server, qemu-guest-agent and the HelmCharts.
+write_files:
+  - path: /etc/rancher/rke2/config.yaml
+    permissions: "0600"
+    content: |
+      token: ${token}
+%{ if server != "" ~}
+      server: ${server}
+%{ endif ~}
+      tls-san:
+        - ${node_ip}
+        - ${rancher_hostname}
+  # Overrides the values of the image's rancher HelmChart.
+  - path: /var/lib/rancher/rke2/server/manifests/rancher-config.yaml
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: rancher
+        namespace: kube-system
+      spec:
+        valuesContent: |-
+          hostname: ${rancher_hostname}
 runcmd:
-  - [systemctl, enable, --now, qemu-guest-agent]
+  # --no-block: joiners that start before node 1 listens exit and are retried by Restart=always.
+  - [systemctl, enable, --now, --no-block, rke2-server]
