@@ -111,7 +111,7 @@ resource "libvirt_volume" "disk" {
 resource "libvirt_cloudinit_disk" "seed" {
   for_each = local.nodes
 
-  name      = "${each.value.hostname}-seed"
+  name = "${each.value.hostname}-seed"
   user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
     ssh_keys         = local.ssh_keys
     token            = random_password.rke2_token.result
