@@ -57,6 +57,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvirt-daemon-system qemu-system-x86 qemu-utils ovmf dnsmasq-base
+          # virt-aa-helper leaves the backing image of a type='volume' disk out of the VM's AppArmor profile, so qemu
+          # gets "Permission denied" on the base volume (DAC ruled out). The runner is discarded, so run without it.
+          echo 'security_driver = "none"' | sudo tee -a /etc/libvirt/qemu.conf
+          sudo systemctl restart libvirtd
           sudo setfacl -m "u:$USER:rw" /var/run/libvirt/libvirt-sock
           virsh -c qemu:///system pool-define-as images dir --target /var/lib/libvirt/images
           virsh -c qemu:///system pool-build images
@@ -74,28 +78,6 @@ jobs:
       - run: tofu test
         env:
           TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
-
-      - name: Dump libvirt diagnostics
-        if: failure()
-        env:
-          TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
-        run: |
-          # tofu test destroyed everything, so apply again outside it and inspect what is left.
-          tofu init -reconfigure -backend-config="path=$RUNNER_TEMP/diag.tfstate" >/dev/null
-          tofu apply -auto-approve -var libvirt_uri=qemu:///system -var node_count=1 >/dev/null 2>&1 || true
-          sudo ls -ln /var/lib/libvirt/images
-          sudo grep -E '^\s*(security_driver|dynamic_ownership|remember_owner|user|group)\s*=' /etc/libvirt/qemu.conf || echo "qemu.conf: all defaults"
-          virsh -c qemu:///system dumpxml Rocky-Cluster-1 | grep -A12 '<disk' | head -40
-          # DAC check: if qemu can open the base once it belongs to qemu's user, the fault is ownership, not AppArmor.
-          sudo chown libvirt-qemu:kvm /var/lib/libvirt/images/rocky-cluster-base-rocky10.qcow2
-          virsh -c qemu:///system start Rocky-Cluster-1 && echo "DAC-CHECK: started after chown" || echo "DAC-CHECK: still fails after chown"
-          virsh -c qemu:///system destroy Rocky-Cluster-1 || true
-          sudo aa-status | grep -iE 'libvirt|virt-aa' || true
-          # Start once more and catch what the start labels: DAC owners and the AppArmor profile's file list.
-          virsh -c qemu:///system start Rocky-Cluster-1 || true
-          sudo cat /etc/apparmor.d/libvirt/*.files 2>/dev/null | grep -i images || echo "no apparmor .files entries"
-          sudo journalctl --no-pager | grep -E 'apparmor="DENIED"' | tail -20 || true
-          sudo dmesg | grep -E 'apparmor="DENIED"' | tail -20 || true
 
       - if: always()
         run: df -h
