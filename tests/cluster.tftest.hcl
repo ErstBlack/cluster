@@ -30,6 +30,7 @@ run "cluster_ready" {
   }
 
   variables {
-    ip = run.apply.nodes["Rocky-Cluster-1"].ip
+    ip  = run.apply.nodes["Rocky-Cluster-1"].ip
+    vip = run.apply.vip
   }
 }

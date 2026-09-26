@@ -5,18 +5,42 @@ users:
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     shell: /bin/bash
     ssh_authorized_keys: ${jsonencode(ssh_keys)}
-# Needs the image/ golden image: it carries rke2-server, qemu-guest-agent and the HelmCharts.
+# Needs the image/ golden image: it carries rke2-server, rke2-agent, keepalived, qemu-guest-agent and the HelmCharts.
+# rke2-elect picks this node's role at boot and writes /etc/rancher/rke2/config.yaml (see rke2_elect.py).
 write_files:
-  - path: /etc/rancher/rke2/config.yaml
+  - path: /usr/local/sbin/rke2_elect.py
+    permissions: "0755"
+    content: ${jsonencode(elect_py)}
+  - path: /etc/rancher/rke2/elect.env
     permissions: "0600"
     content: |
-      token: ${token}
-%{ if server != "" ~}
-      server: ${server}
-%{ endif ~}
-      tls-san:
-        - ${node_ip}
-        - ${rancher_hostname}
+      RKE2_TOKEN=${token}
+      NODE_IP=${node_ip}
+      VIP=${vip}
+      CONTROL_PLANE_COUNT=${control_plane_count}
+      RANCHER_HOSTNAME=${rancher_hostname}
+  - path: /etc/systemd/system/rke2-elect.service
+    content: |
+      [Unit]
+      Description=Elect this node's RKE2 role, then bootstrap or join through the VIP
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      EnvironmentFile=/etc/rancher/rke2/elect.env
+      ExecStart=/usr/bin/python3 /usr/local/sbin/rke2_elect.py
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  # keepalived's vrrp_script. Policy labels /usr/libexec/keepalived keepalived_unconfined_script_exec_t,
+  # so curl runs unconfined instead of needing keepalived_t to reach :9345.
+  - path: /usr/libexec/keepalived/rke2-check.sh
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      exec curl -sfk --max-time 2 -o /dev/null https://127.0.0.1:9345/ping
   # Overrides the values of the image's rancher HelmChart.
   - path: /var/lib/rancher/rke2/server/manifests/rancher-config.yaml
     content: |
@@ -29,5 +53,8 @@ write_files:
         valuesContent: |-
           hostname: ${rancher_hostname}
 runcmd:
-  # --no-block: joiners that start before node 1 listens exit and are retried by Restart=always.
-  - [systemctl, enable, --now, --no-block, rke2-server]
+  # If write_files created the directory, it carries its parent's label. This applies the policy label.
+  - [restorecon, -R, /usr/libexec/keepalived]
+  - [systemctl, daemon-reload]
+  # --no-block: the unit runs for the node's lifetime, beaconing so late nodes join.
+  - [systemctl, enable, --now, --no-block, rke2-elect]

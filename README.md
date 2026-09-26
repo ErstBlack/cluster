@@ -1,6 +1,6 @@
 # cluster
 
-OpenTofu project that runs five Rocky Linux 10 VMs, `Rocky-Cluster-1` to `Rocky-Cluster-5`, on the
+OpenTofu project that runs nine Rocky Linux 10 VMs, `Rocky-Cluster-1` to `Rocky-Cluster-9`, on the
 KVM host `vcows`. Tofu runs in a podman container and reaches libvirt at `qemu+sshcmd://vcows/system`
 through the `vcows` entry in `~/.ssh/config`.
 
@@ -58,14 +58,20 @@ rebuilds every VM from scratch: overlays and domains are destroyed and re-create
 ## RKE2 golden image
 
 `image/build.sh` builds `image/output/rocky-rke2.qcow2` (gitignored) from `image/blueprint.toml` with
-osbuild `image-builder` in a pinned, privileged root podman container. The image carries `rke2-server`
-(disabled), `rke2-selinux`, `kernel-modules-extra`, `qemu-guest-agent`, and HelmCharts for cert-manager
-and Rancher in `/var/lib/rancher/rke2/server/manifests/`.
+osbuild `image-builder` in a pinned, privileged root podman container. The image carries `rke2-server`,
+`rke2-agent` and `keepalived` (all disabled), `rke2-selinux`, `kernel-modules-extra`, `qemu-guest-agent`,
+and HelmCharts for cert-manager and Rancher in `/var/lib/rancher/rke2/server/manifests/`.
 
-At first boot cloud-init writes `/etc/rancher/rke2/config.yaml` (token, `tls-san`, and `server:` on nodes
-2 and up) and starts `rke2-server`. Node 1 initializes the cluster and all nodes are servers. Rancher is
-served at `https://rancher.192.168.150.11.sslip.io`. Nodes pull charts and container images at runtime.
-The cloud-init needs this image. The GenericCloud default has no RKE2.
+No node has a fixed role. At first boot cloud-init starts `rke2-elect` (`cloud-init/rke2_elect.py`). Each
+node draws a random token and broadcasts it on UDP 9346, signed with the RKE2 join token. Once 60 s pass
+with no node appearing or dropping out (silent for 10 s), the `control_plane_count` (default 3) highest
+tokens become servers and the highest bootstraps the cluster. If the elected bootstrap dies before it
+starts RKE2, including within about 10 s before the decision, the others wait on the VIP forever.
+Recover with `./tofu.sh destroy` and `./tofu.sh apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
+VIP and joins as an agent. The servers run keepalived, which holds the VIP `192.168.150.10` on a server
+whose RKE2 supervisor answers. Nodes join through `https://192.168.150.10:9345`, and Rancher is served at
+`https://rancher.192.168.150.10.sslip.io`. After a reboot the node keeps its role. Nodes pull charts and
+container images at runtime. The cloud-init needs this image. The GenericCloud default has no RKE2.
 
 ```sh
 image/build.sh

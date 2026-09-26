@@ -49,6 +49,7 @@ jobs:
         with:
           tofu_wrapper: false
 
+      - run: python3 -m unittest discover -s cloud-init
       - run: tofu fmt -check -recursive
       - run: tofu init -backend=false
       - run: tofu validate
