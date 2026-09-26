@@ -83,11 +83,14 @@ jobs:
           # tofu test destroyed everything, so apply again outside it and inspect what is left.
           tofu init -reconfigure -backend-config="path=$RUNNER_TEMP/diag.tfstate" >/dev/null
           tofu apply -auto-approve -var libvirt_uri=qemu:///system -var node_count=1 >/dev/null 2>&1 || true
-          sudo ls -ld /var/lib/libvirt /var/lib/libvirt/images
           sudo ls -ln /var/lib/libvirt/images
-          sudo grep -h images /etc/apparmor.d/libvirt/*.files || echo "no apparmor .files entries"
-          sudo journalctl -k --no-pager | grep -i denied | tail -20 || true
-          sudo journalctl -u libvirtd --no-pager | grep -iE 'error|warn' | tail -20 || true
+          grep -E '^\s*#?\s*(security_driver|dynamic_ownership|user|group)\s*=' /etc/libvirt/qemu.conf || true
+          sudo aa-status | grep -iE 'libvirt|virt-aa' || true
+          # Start once more and catch what the start labels: DAC owners and the AppArmor profile's file list.
+          virsh -c qemu:///system start Rocky-Cluster-1 || true
+          sudo cat /etc/apparmor.d/libvirt/*.files 2>/dev/null | grep -i images || echo "no apparmor .files entries"
+          sudo journalctl --no-pager | grep -E 'apparmor="DENIED"' | tail -20 || true
+          sudo dmesg | grep -E 'apparmor="DENIED"' | tail -20 || true
 
       - if: always()
         run: df -h
