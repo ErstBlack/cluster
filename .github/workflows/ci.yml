@@ -77,10 +77,17 @@ jobs:
 
       - name: Dump libvirt diagnostics
         if: failure()
+        env:
+          TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
         run: |
-          sudo ls -lZ /var/lib/libvirt/images
-          sudo journalctl -k --no-pager | grep -i apparmor | tail -40
-          sudo tail -40 /var/log/libvirt/qemu/*.log
+          # tofu test destroyed everything, so apply again outside it and inspect what is left.
+          tofu init -reconfigure -backend-config="path=$RUNNER_TEMP/diag.tfstate" >/dev/null
+          tofu apply -auto-approve -var libvirt_uri=qemu:///system -var node_count=1 >/dev/null 2>&1 || true
+          sudo ls -ld /var/lib/libvirt /var/lib/libvirt/images
+          sudo ls -ln /var/lib/libvirt/images
+          sudo grep -h images /etc/apparmor.d/libvirt/*.files || echo "no apparmor .files entries"
+          sudo journalctl -k --no-pager | grep -i denied | tail -20 || true
+          sudo journalctl -u libvirtd --no-pager | grep -iE 'error|warn' | tail -20 || true
 
       - if: always()
         run: df -h
