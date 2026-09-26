@@ -75,5 +75,12 @@ jobs:
         env:
           TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
 
+      - name: Dump libvirt diagnostics
+        if: failure()
+        run: |
+          sudo ls -lZ /var/lib/libvirt/images
+          sudo journalctl -k --no-pager | grep -i apparmor | tail -40
+          sudo tail -40 /var/log/libvirt/qemu/*.log
+
       - if: always()
         run: df -h
