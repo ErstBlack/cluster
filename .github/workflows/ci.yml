@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: image/output/
+          key: rocky-rke2-${{ hashFiles('image/*') }}
+
+      # The osbuild store can outgrow the free space on /, so keep it on the /mnt disk.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo mkdir -p /mnt/image-builder /var/cache/image-builder
+          sudo mount --bind /mnt/image-builder /var/cache/image-builder
+          df -h
+
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: image/build.sh
+
+      - if: always()
+        run: df -h
+
+  test:
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: image/output/
+          key: rocky-rke2-${{ hashFiles('image/*') }}
+          fail-on-cache-miss: true
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+
+      - run: tofu fmt -check -recursive
+      - run: tofu init -backend=false
+      - run: tofu validate
+
+      - name: Install libvirt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvirt-daemon-system qemu-system-x86 qemu-utils ovmf dnsmasq-base
+          sudo setfacl -m "u:$USER:rw" /var/run/libvirt/libvirt-sock
+          virsh -c qemu:///system pool-define-as images dir --target /var/lib/libvirt/images
+          virsh -c qemu:///system pool-build images
+          virsh -c qemu:///system pool-start images
+
+      # main.tf selects Secure Boot firmware with Microsoft keys enrolled. Fail here if ovmf ships no such descriptor.
+      - name: Check OVMF enrolled-keys descriptor
+        run: grep -l '"enrolled-keys"' /usr/share/qemu/firmware/*.json
+
+      # main.tf puts every ~/.ssh/*.pub into cloud-init. tests/ready logs in with this key.
+      - run: |
+          install -d -m 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
+
+      - run: tofu test
+        env:
+          TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
+
+      - if: always()
+        run: df -h
