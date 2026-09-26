@@ -84,7 +84,12 @@ jobs:
           tofu init -reconfigure -backend-config="path=$RUNNER_TEMP/diag.tfstate" >/dev/null
           tofu apply -auto-approve -var libvirt_uri=qemu:///system -var node_count=1 >/dev/null 2>&1 || true
           sudo ls -ln /var/lib/libvirt/images
-          grep -E '^\s*#?\s*(security_driver|dynamic_ownership|user|group)\s*=' /etc/libvirt/qemu.conf || true
+          sudo grep -E '^\s*(security_driver|dynamic_ownership|remember_owner|user|group)\s*=' /etc/libvirt/qemu.conf || echo "qemu.conf: all defaults"
+          virsh -c qemu:///system dumpxml Rocky-Cluster-1 | grep -A12 '<disk' | head -40
+          # DAC check: if qemu can open the base once it belongs to qemu's user, the fault is ownership, not AppArmor.
+          sudo chown libvirt-qemu:kvm /var/lib/libvirt/images/rocky-cluster-base-rocky10.qcow2
+          virsh -c qemu:///system start Rocky-Cluster-1 && echo "DAC-CHECK: started after chown" || echo "DAC-CHECK: still fails after chown"
+          virsh -c qemu:///system destroy Rocky-Cluster-1 || true
           sudo aa-status | grep -iE 'libvirt|virt-aa' || true
           # Start once more and catch what the start labels: DAC owners and the AppArmor profile's file list.
           virsh -c qemu:///system start Rocky-Cluster-1 || true
