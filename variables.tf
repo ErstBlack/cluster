@@ -10,11 +10,22 @@ variable "pool" {
 
 variable "node_count" {
   type    = number
-  default = 5
+  default = 9
 
   validation {
     condition     = var.node_count >= 1 && var.node_count <= 9 && floor(var.node_count) == var.node_count
     error_message = "node_count must be a whole number from 1 to 9: MACs end :0N and IPs end .1N."
+  }
+}
+
+# The top control_plane_count nodes by election token become servers. Odd keeps etcd quorum clean.
+variable "control_plane_count" {
+  type    = number
+  default = 3
+
+  validation {
+    condition     = var.control_plane_count >= 1 && floor(var.control_plane_count) == var.control_plane_count && var.control_plane_count % 2 == 1
+    error_message = "control_plane_count must be an odd whole number of at least 1."
   }
 }
 

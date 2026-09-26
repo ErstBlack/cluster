@@ -1,5 +1,6 @@
-# Rocky 10 golden image with RKE2 staged. Cloud-init writes /etc/rancher/rke2/config.yaml and starts
-# rke2-server at first boot. RKE2 then applies the HelmCharts below. Build with image/build.sh.
+# Rocky 10 golden image with RKE2 staged. At first boot the rke2-elect unit from cloud-init picks the
+# node's role, writes /etc/rancher/rke2/config.yaml and starts rke2-server or rke2-agent. RKE2 then
+# applies the HelmCharts below. Build with image/build.sh.
 # The qcow2 image type already brings cloud-init and shim-x64 and leaves out firewalld.
 name = "rocky-rke2"
 description = "Rocky 10 with RKE2, cert-manager and Rancher staged for first boot"
@@ -9,6 +10,10 @@ version = "0.1.0"
 # Comes from the rpm.rancher.io repos in rocky-10.2.json, GPG checked at build time.
 [[packages]]
 name = "rke2-server"
+version = "1.36.4~rke2r1"
+
+[[packages]]
+name = "rke2-agent"
 version = "1.36.4~rke2r1"
 
 [[packages]]
@@ -22,7 +27,12 @@ name = "kernel-modules-extra"
 [[packages]]
 name = "qemu-guest-agent"
 
-# rke2-server stays disabled: it must not start before cloud-init writes the token.
+# Holds the VIP on the elected servers. From Rocky 10.2 AppStream.
+[[packages]]
+name = "keepalived"
+version = "2.2.8-9.el10"
+
+# rke2-server, rke2-agent and keepalived stay disabled: rke2-elect writes their config and starts them.
 [customizations.services]
 enabled = ["qemu-guest-agent"]
 

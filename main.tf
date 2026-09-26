@@ -48,9 +48,10 @@ locals {
   }
   nodes = { for k, v in local.slots : k => v if tonumber(k) <= var.node_count }
 
-  # Node 1 initializes the RKE2 cluster and every other node joins it. All nodes are servers.
-  init_ip          = local.slots["1"].ip
-  rancher_hostname = "rancher.${local.init_ip}.sslip.io"
+  # Nodes elect their RKE2 roles at boot. keepalived floats the VIP over the servers, so joins and
+  # Rancher never depend on one node. .10 sits below the slots (.11-.19) and the DHCP range.
+  vip              = cidrhost(local.network_cidr, 10)
+  rancher_hostname = "rancher.${local.vip}.sslip.io"
 }
 
 resource "random_password" "rke2_token" {
@@ -113,11 +114,13 @@ resource "libvirt_cloudinit_disk" "seed" {
 
   name = "${each.value.hostname}-seed"
   user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
-    ssh_keys         = local.ssh_keys
-    token            = random_password.rke2_token.result
-    node_ip          = each.value.ip
-    server           = each.key == "1" ? "" : "https://${local.init_ip}:9345"
-    rancher_hostname = local.rancher_hostname
+    ssh_keys            = local.ssh_keys
+    token               = random_password.rke2_token.result
+    node_ip             = each.value.ip
+    vip                 = local.vip
+    control_plane_count = var.control_plane_count
+    rancher_hostname    = local.rancher_hostname
+    elect_py            = file("${path.module}/cloud-init/rke2_elect.py")
   })
   meta_data = yamlencode({
     instance-id    = each.value.hostname
