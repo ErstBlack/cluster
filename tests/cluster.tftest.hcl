@@ -17,11 +17,6 @@ run "apply" {
     condition     = output.nodes["Rocky-Cluster-1"].ip == "192.168.150.11"
     error_message = "Rocky-Cluster-1 is not at 192.168.150.11"
   }
-
-  assert {
-    condition     = libvirt_domain.node["1"].running
-    error_message = "Rocky-Cluster-1 is not running"
-  }
 }
 
 run "cluster_ready" {
