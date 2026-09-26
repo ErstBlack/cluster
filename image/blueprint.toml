@@ -36,21 +36,6 @@ version = "2.2.8-9.el10"
 [customizations.services]
 enabled = ["qemu-guest-agent"]
 
-# Build-time repos are not copied into the image. These let the node update RKE2 with GPG checks.
-[[customizations.repositories]]
-id = "rancher-rke2-common-stable"
-name = "Rancher RKE2 Common (stable)"
-baseurls = ["https://rpm.rancher.io/rke2/stable/common/centos/10/noarch"]
-gpgkeys = ["https://rpm.rancher.io/public.key"]
-gpgcheck = true
-
-[[customizations.repositories]]
-id = "rancher-rke2-1.36-stable"
-name = "Rancher RKE2 1.36 (stable)"
-baseurls = ["https://rpm.rancher.io/rke2/stable/1.36/centos/10/x86_64"]
-gpgkeys = ["https://rpm.rancher.io/public.key"]
-gpgcheck = true
-
 # The RPMs do not create this directory. Without mode/user/group an existing one is fine.
 [[customizations.directories]]
 path = "/var/lib/rancher/rke2/server/manifests"
