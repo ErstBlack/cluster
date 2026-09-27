@@ -24,6 +24,12 @@ worktree replaces whatever arrangement another session left running, and a destr
 lock error means another session is mid-run. `tofu test` ignores the backend and does not touch
 this state.
 
+## Commands
+
+`just` lists the recipes. `just check` runs the checks CI runs before `tofu test`. `just tofu <verb>`
+goes through `tofu.sh`, which shares the `/srv/rocky-cluster` state (see "One tofu state for every
+checkout").
+
 ## Refer to code by name
 
 Anchor every reference to a name (a symbol, heading, variable or filename), never `file:NN`. A

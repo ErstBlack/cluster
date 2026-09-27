@@ -19,13 +19,17 @@ console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-clu
 
 ## Use
 
+`just` lists the recipes.
+
 ```sh
-podman build -t rocky-cluster-tofu .
-./tofu.sh init
-./tofu.sh plan
-./tofu.sh apply
-./tofu.sh output
-./tofu.sh destroy
+just check
+just image
+just container
+just tofu init
+just tofu plan
+just tofu apply
+just tofu output
+just tofu destroy
 ```
 
 `tofu.sh` mounts this directory at `/work` and `~/.ssh` read-only. The cloud-init user `rocky` gets
