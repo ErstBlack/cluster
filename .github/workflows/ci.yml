@@ -41,7 +41,7 @@ jobs:
           key: rocky-rke2-${{ hashFiles('image/*') }}
           fail-on-cache-miss: true
 
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_wrapper: false
 
