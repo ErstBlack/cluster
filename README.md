@@ -12,7 +12,7 @@ through the `vcows` entry in `~/.ssh/config`.
 |---|---|---|
 | Rocky-Cluster-N | `52:54:00:c1:00:0N` | `192.168.150.1N` |
 
-Each VM has 4 vCPU (host-passthrough), 8 GiB RAM, a 20 GiB thin qcow2 overlay on a shared base image,
+Each VM has 4 vCPU (host-passthrough), 8 GiB RAM, a 40 GiB thin qcow2 overlay on a shared base image,
 UEFI with Secure Boot on (Microsoft keys enrolled, so Rocky's signed shim verifies), VNC and a serial
 console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-cluster`
 (192.168.150.0/24). Every volume tofu creates in the `images` pool is prefixed `rocky-cluster-`.
@@ -83,8 +83,19 @@ starts RKE2, including within about 10 s before the decision, the others wait on
 Recover with `./tofu.sh destroy` and `./tofu.sh apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
 VIP and joins as an agent. The servers run keepalived, which holds the VIP `192.168.150.10` on a server
 whose RKE2 supervisor answers. Nodes join through `https://192.168.150.10:9345`, and Rancher is served at
-`https://rancher.192.168.150.10.sslip.io`. After a reboot the node keeps its role. Nodes pull charts and
-container images at runtime. The cloud-init needs this image. The GenericCloud default has no RKE2.
+`https://rancher.192.168.150.10.sslip.io`. After a reboot the node keeps its role. Nodes fetch the two
+charts at runtime. The cloud-init needs this image. The GenericCloud default has no RKE2.
+
+The container images ship pre-imported. `image/airgap-images.txt` lists the RKE2 airgap tarball and the
+cert-manager and Rancher image refs. `image/airgap.sh` fetches whatever is missing into a cache
+(default `/srv/rocky-cluster/images/agent-images`), imports everything with RKE2's own containerd into
+`/var/lib/rancher/rke2/agent/containerd`, and packages that state as the RPM `rke2-airgap-images` in the
+local repo `image/output/airgap-repo`. `image/build.sh` runs it, adds the repo with `--extra-repo` and
+installs the package from `image/airgap.toml`. Nodes then start with every image already unpacked and the
+rke2-runtime binaries already staged in `/var/lib/rancher/rke2/data`.
+The seeded state is tied to the RKE2 release's containerd, so bumping RKE2 means updating the tarball URL
+in the manifest. `SKIP_AIRGAP=1 image/build.sh` builds without the package and nodes pull at first boot.
+CI does that. The host needs `skopeo` and `curl`. `rpmbuild` and `createrepo_c` run in a Rocky 10 container.
 
 ```sh
 image/build.sh
