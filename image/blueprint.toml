@@ -1,5 +1,6 @@
 # Rocky 10 golden image with RKE2 staged. At first boot the rke2-elect unit from cloud-init picks the
-# node's role, writes /etc/rancher/rke2/config.yaml and starts rke2-server or rke2-agent. RKE2 then
+# node's role, and rke2-configure writes /etc/rancher/rke2/config.yaml and starts rke2-server or
+# rke2-agent. RKE2 then
 # applies the HelmCharts below. Build with image/build.sh.
 # The qcow2 image type already brings cloud-init and shim-x64 and leaves out firewalld.
 name = "rocky-rke2"
@@ -35,21 +36,6 @@ version = "2.2.8-9.el10"
 # rke2-server, rke2-agent and keepalived stay disabled: rke2-configure writes their config and starts them.
 [customizations.services]
 enabled = ["qemu-guest-agent"]
-
-# Build-time repos are not copied into the image. These let the node update RKE2 with GPG checks.
-[[customizations.repositories]]
-id = "rancher-rke2-common-stable"
-name = "Rancher RKE2 Common (stable)"
-baseurls = ["https://rpm.rancher.io/rke2/stable/common/centos/10/noarch"]
-gpgkeys = ["https://rpm.rancher.io/public.key"]
-gpgcheck = true
-
-[[customizations.repositories]]
-id = "rancher-rke2-1.36-stable"
-name = "Rancher RKE2 1.36 (stable)"
-baseurls = ["https://rpm.rancher.io/rke2/stable/1.36/centos/10/x86_64"]
-gpgkeys = ["https://rpm.rancher.io/public.key"]
-gpgcheck = true
 
 # The RPMs do not create this directory. Without mode/user/group an existing one is fine.
 [[customizations.directories]]

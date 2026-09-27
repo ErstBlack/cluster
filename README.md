@@ -1,7 +1,11 @@
 # cluster
 
-OpenTofu project that runs nine Rocky Linux 10 VMs, `Rocky-Cluster-1` to `Rocky-Cluster-9`, on the
-KVM host `vcows`. Tofu runs in a podman container and reaches libvirt at `qemu+sshcmd://vcows/system`
+A Rocky Linux 10 golden image (`image/`) whose nodes form an RKE2 + Rancher cluster at first boot
+through cloud-init and `cloud-init/rke2_elect.py`. Real deployments are independent physical and
+virtual nodes, each started on its own with no orchestrator.
+
+The OpenTofu project here is the test harness. It runs nine VMs, `Rocky-Cluster-1` to
+`Rocky-Cluster-9`, on the KVM host `vcows`. Tofu runs in a podman container and reaches libvirt at `qemu+sshcmd://vcows/system`
 through the `vcows` entry in `~/.ssh/config`.
 
 | VM | MAC | IP |

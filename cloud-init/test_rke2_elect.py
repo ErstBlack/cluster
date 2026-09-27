@@ -2,10 +2,14 @@ import os
 import tempfile
 import unittest
 
-from rke2_elect import (EXPIRE, INTERVAL, SETTLE, decide, elect, load_state, role_of, settled, sign,
-                        top, verify)
+from rke2_elect import EXPIRE, INTERVAL, SETTLE, elect, load_state, role_of, settled, sign, top, verify
 
 A, B, C, D = (9, "10.0.0.1"), (7, "10.0.0.2"), (7, "10.0.0.3"), (1, "10.0.0.4")
+
+
+def decide(me, peers, n):
+    """me and peers are (token, ip). Same peer set on every node gives the same answer."""
+    return role_of(me, top({me, *peers}, n))
 
 
 class Decide(unittest.TestCase):

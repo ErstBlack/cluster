@@ -53,14 +53,13 @@ def role_of(me, servers):
     return "server", servers[0] == me
 
 
-def decide(me, peers, n):
-    """me and peers are (token, ip). Same peer set on every node gives the same answer."""
-    return role_of(me, top({me, *peers}, n))
+def digest(key, body):
+    """HMAC-SHA256 of body's canonical JSON."""
+    return hmac.new(key, json.dumps(body, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
 
 
 def sign(key, body):
-    msg = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    return json.dumps({**body, "mac": hmac.new(key, msg, hashlib.sha256).hexdigest()}).encode()
+    return json.dumps({**body, "mac": digest(key, body)}).encode()
 
 
 def verify(key, data):
@@ -68,8 +67,7 @@ def verify(key, data):
     try:
         body = json.loads(data)
         mac = body.pop("mac")
-        msg = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-        if not hmac.compare_digest(mac, hmac.new(key, msg, hashlib.sha256).hexdigest()):
+        if not hmac.compare_digest(mac, digest(key, body)):
             return None
         if body["state"] not in ("electing", "decided"):
             return None
@@ -217,7 +215,7 @@ def main():
     print(f"{state['role']}{' (bootstrap)' if state['bootstrap'] else ''}", flush=True)
 
     # Keep beaconing `decided` so late nodes join rather than elect.
-    token, servers = state["token"], [tuple(s) for s in state["servers"]]
+    token, servers = state["token"], state["servers"]
     beacon = lambda: {"ip": ip, "token": token, "state": "decided", "servers": servers}
     for _ in exchange(sock, key, ip, beacon):
         pass

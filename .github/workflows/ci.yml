@@ -24,13 +24,9 @@ jobs:
         run: |
           sudo mkdir -p /mnt/image-builder /var/cache/image-builder
           sudo mount --bind /mnt/image-builder /var/cache/image-builder
-          df -h
 
       - if: steps.cache.outputs.cache-hit != 'true'
         run: image/build.sh
-
-      - if: always()
-        run: df -h
 
   test:
     needs: image
@@ -79,6 +75,3 @@ jobs:
       - run: tofu test
         env:
           TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
-
-      - if: always()
-        run: df -h
