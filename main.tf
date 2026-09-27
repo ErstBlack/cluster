@@ -109,23 +109,20 @@ resource "libvirt_volume" "disk" {
   }
 }
 
+# One seed for every node. Each node sets its own hostname and finds its own address at boot.
 resource "libvirt_cloudinit_disk" "seed" {
-  for_each = local.nodes
-
-  name = "${each.value.hostname}-seed"
+  name = "${local.prefix}-seed"
   user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
     ssh_keys            = local.ssh_keys
     token               = random_password.rke2_token.result
-    node_ip             = each.value.ip
     vip                 = local.vip
     control_plane_count = var.control_plane_count
     rancher_hostname    = local.rancher_hostname
+    addr_py             = file("${path.module}/cloud-init/node_addr.py")
     elect_py            = file("${path.module}/cloud-init/rke2_elect.py")
+    configure_py        = file("${path.module}/cloud-init/rke2_configure.py")
   })
-  meta_data = yamlencode({
-    instance-id    = each.value.hostname
-    local-hostname = each.value.hostname
-  })
+  meta_data = yamlencode({ instance-id = local.prefix })
 }
 
 resource "libvirt_volume" "seed" {
@@ -133,7 +130,7 @@ resource "libvirt_volume" "seed" {
 
   name   = "${each.value.hostname}-seed.iso"
   pool   = var.pool
-  create = { content = { url = libvirt_cloudinit_disk.seed[each.key].path } }
+  create = { content = { url = libvirt_cloudinit_disk.seed.path } }
 }
 
 resource "libvirt_domain" "node" {
@@ -170,7 +167,9 @@ resource "libvirt_domain" "node" {
       {
         source = { volume = { pool = var.pool, volume = libvirt_volume.disk[each.key].name } }
         target = { bus = "virtio", dev = "vda" }
-        driver = { type = "qcow2" }
+        # The host ignores guest flushes. Every VM shares the host's disks, and etcd's fsyncs stall behind
+        # the other nodes' image pulls. A host crash can corrupt the disks, which are disposable test VMs.
+        driver = { type = "qcow2", cache = "unsafe" }
       },
       {
         device = "cdrom"

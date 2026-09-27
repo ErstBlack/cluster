@@ -66,10 +66,19 @@ osbuild `image-builder` in a pinned, privileged root podman container. The image
 `rke2-agent` and `keepalived` (all disabled), `rke2-selinux`, `kernel-modules-extra`, `qemu-guest-agent`,
 and HelmCharts for cert-manager and Rancher in `/var/lib/rancher/rke2/server/manifests/`.
 
-No node has a fixed role. At first boot cloud-init starts `rke2-elect` (`cloud-init/rke2_elect.py`). Each
-node draws a random token and broadcasts it on UDP 9346, signed with the RKE2 join token. Once 60 s pass
-with no node appearing or dropping out (silent for 10 s), the `control_plane_count` (default 3) highest
-tokens become servers and the highest bootstraps the cluster. If the elected bootstrap dies before it
+Every node gets the same user-data and meta-data and works out the rest at boot. cloud-init names
+the node `node-` plus the first 10 hex characters of `/etc/machine-id`, then starts three units in
+order, each reading the one before. `node-addr` (`cloud-init/node_addr.py`) writes the node's address
+on the VIP's subnet, however DHCP or static config assigned it, and its interface to
+`/run/rke2/node.env`. `rke2-elect` (`cloud-init/rke2_elect.py`) elects the node's role, reports ready
+to systemd and keeps beaconing the decision. `rke2-configure` (`cloud-init/rke2_configure.py`) on
+first boot waits for the VIP unless the node bootstraps and writes `keepalived.conf` on servers and
+`config.yaml`. On every boot it makes sure the role's units are enabled and started.
+
+No node has a fixed role. Each node draws a random token and broadcasts it on UDP 9346, signed with
+the RKE2 join token. Once 60 s pass with no node appearing or dropping out (silent for 10 s), the
+`control_plane_count` (default 3) highest tokens become servers and the highest
+bootstraps the cluster. If the elected bootstrap dies before it
 starts RKE2, including within about 10 s before the decision, the others wait on the VIP forever.
 Recover with `./tofu.sh destroy` and `./tofu.sh apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
 VIP and joins as an agent. The servers run keepalived, which holds the VIP `192.168.150.10` on a server

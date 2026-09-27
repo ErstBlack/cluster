@@ -1,4 +1,7 @@
 #cloud-config
+# The same for every node. Each node sets its own hostname and finds its own address at boot.
+# Keeps cloud-init from resetting the hostname runcmd sets.
+preserve_hostname: true
 users:
   - name: rocky
     groups: [wheel]
@@ -6,29 +9,78 @@ users:
     shell: /bin/bash
     ssh_authorized_keys: ${jsonencode(ssh_keys)}
 # Needs the image/ golden image: it carries rke2-server, rke2-agent, keepalived, qemu-guest-agent and the HelmCharts.
-# rke2-elect picks this node's role at boot and writes /etc/rancher/rke2/config.yaml (see rke2_elect.py).
+# At boot node-addr finds this node's address, rke2-elect picks its role, and rke2-configure writes
+# /etc/rancher/rke2/config.yaml and starts RKE2 (see the scripts).
 write_files:
+  - path: /usr/local/sbin/node_addr.py
+    permissions: "0755"
+    content: ${jsonencode(addr_py)}
   - path: /usr/local/sbin/rke2_elect.py
     permissions: "0755"
     content: ${jsonencode(elect_py)}
+  - path: /usr/local/sbin/rke2_configure.py
+    permissions: "0755"
+    content: ${jsonencode(configure_py)}
   - path: /etc/rancher/rke2/elect.env
     permissions: "0600"
     content: |
       RKE2_TOKEN=${token}
-      NODE_IP=${node_ip}
       VIP=${vip}
       CONTROL_PLANE_COUNT=${control_plane_count}
       RANCHER_HOSTNAME=${rancher_hostname}
-  - path: /etc/systemd/system/rke2-elect.service
+  # Writes NODE_IP and NODE_IFACE. Waits until the node has an address on the VIP's subnet.
+  - path: /etc/systemd/system/node-addr.service
     content: |
       [Unit]
-      Description=Elect this node's RKE2 role, then bootstrap or join through the VIP
+      Description=Find this node's address on the VIP's subnet
       Wants=network-online.target
       After=network-online.target
 
       [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      TimeoutStartSec=infinity
       EnvironmentFile=/etc/rancher/rke2/elect.env
+      ExecStart=/usr/bin/python3 /usr/local/sbin/node_addr.py
+
+      [Install]
+      WantedBy=multi-user.target
+  # Ready once the role is recorded. It keeps beaconing for the node's lifetime so late nodes join.
+  - path: /etc/systemd/system/rke2-elect.service
+    content: |
+      [Unit]
+      Description=Elect this node's RKE2 role, then beacon it
+      Requires=node-addr.service
+      After=node-addr.service
+
+      [Service]
+      Type=notify
+      NotifyAccess=main
+      TimeoutStartSec=infinity
+      EnvironmentFile=/etc/rancher/rke2/elect.env
+      EnvironmentFile=/run/rke2/node.env
       ExecStart=/usr/bin/python3 /usr/local/sbin/rke2_elect.py
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  # Writes config.yaml on first boot and enables the role's units on every boot. TimeoutStartSec covers a
+  # joiner's wait on the VIP. Restart covers rke2-elect failing before it records a decision.
+  - path: /etc/systemd/system/rke2-configure.service
+    content: |
+      [Unit]
+      Description=Write this node's RKE2 config and start its role
+      Wants=rke2-elect.service
+      After=rke2-elect.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      TimeoutStartSec=infinity
+      EnvironmentFile=/etc/rancher/rke2/elect.env
+      EnvironmentFile=/run/rke2/node.env
+      ExecStart=/usr/bin/python3 /usr/local/sbin/rke2_configure.py
       Restart=on-failure
       RestartSec=5
 
@@ -53,8 +105,9 @@ write_files:
         valuesContent: |-
           hostname: ${rancher_hostname}
 runcmd:
+  - [sh, -c, 'hostnamectl set-hostname "node-$(head -c 10 /etc/machine-id)"']
   # If write_files created the directory, it carries its parent's label. This applies the policy label.
   - [restorecon, -R, /usr/libexec/keepalived]
   - [systemctl, daemon-reload]
-  # --no-block: the unit runs for the node's lifetime, beaconing so late nodes join.
-  - [systemctl, enable, --now, --no-block, rke2-elect]
+  # --no-block: rke2-elect waits on the election and rke2-configure on rke2-elect.
+  - [systemctl, enable, --now, --no-block, node-addr, rke2-elect, rke2-configure]
