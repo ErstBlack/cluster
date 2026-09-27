@@ -35,6 +35,8 @@ jobs:
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      TOFU: tofu
     steps:
       - uses: actions/checkout@v7
 
@@ -48,10 +50,9 @@ jobs:
         with:
           tofu_wrapper: false
 
-      - run: python3 -m unittest discover -s cloud-init
-      - run: tofu fmt -check -recursive
-      - run: tofu init -backend=false
-      - run: tofu validate
+      - uses: extractions/setup-just@v4
+
+      - run: just check
 
       - name: Install libvirt
         run: |
@@ -75,6 +76,6 @@ jobs:
           install -d -m 700 ~/.ssh
           ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
 
-      - run: tofu test
+      - run: just tofu test
         env:
           TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
