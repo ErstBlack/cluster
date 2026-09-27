@@ -1,18 +1,20 @@
 #!/usr/bin/python3
-"""Elect this node's RKE2 role at first boot, then bootstrap or join the cluster through the VIP.
+"""Elect this node's RKE2 role at first boot and record it in STATE for rke2-configure.
 
 Every node broadcasts a signed beacon {ip, token, state} to UDP 9346 every 2s. Once 60s pass with
 no change in the set of live peers, the top N tokens become servers and the largest bootstraps. A
 node that sees a `decided` beacon adopts that decision instead of making its own, and one that finds
 the VIP answering joins as an agent. A node is identified by (token, ip). The token is drawn once and
 kept in STATE, so a restarted unit or a reboot keeps its role, while a rebuilt disk draws a new token,
-is named in no decision, and joins as an agent.
+is named in no decision, and joins as an agent. Once the role is recorded, the unit reports ready to
+systemd, which then runs rke2-configure, and keeps beaconing `decided` so late nodes join rather
+than elect.
 
 ponytail: a dead server is not replaced by promoting an agent; the control plane stays below N
 until the cluster is rebuilt.
-ponytail: an elected bootstrap that dies for good before its apply, including one that goes silent
-within about EXPIRE before the decision, leaves the others waiting on the VIP forever. Recovery is
-`tofu destroy` then `tofu apply`. Upgrade path: a VIP-wait timeout that re-elects.
+ponytail: an elected bootstrap that dies for good before rke2-configure starts RKE2, including one
+that goes silent within about EXPIRE before the decision, leaves the others waiting on the VIP
+forever. Recovery is `tofu destroy` then `tofu apply`. Upgrade path: a VIP-wait timeout that re-elects.
 ponytail: no cluster merging. Two clusters formed apart stay apart.
 ponytail: broadcast and VRRP are L2 only. Routed subnets need BGP (MetalLB) and a discovery seed.
 ponytail: virtual_router_id is fixed at 51, so one cluster per L2 segment until merging lands.
@@ -24,7 +26,6 @@ import os
 import secrets
 import socket
 import ssl
-import subprocess
 import time
 import urllib.request
 
@@ -37,10 +38,7 @@ GRACE = 3 * INTERVAL
 # decision. One that died later is still elected (see the ponytail above). SETTLE > EXPIRE + INTERVAL
 # makes sure a peer that dies right after its first beacon is dropped before anyone decides.
 EXPIRE = 5 * INTERVAL
-CONFIG = "/etc/rancher/rke2/config.yaml"
 STATE = "/etc/rancher/rke2/elect.json"
-KEEPALIVED = "/etc/keepalived/keepalived.conf"
-CHECK = "/usr/libexec/keepalived/rke2-check.sh"
 
 
 def top(members, n):
@@ -167,40 +165,6 @@ def write(path, text, mode=0o644):
     os.replace(tmp, path)
 
 
-def keepalived_conf(vip):
-    iface = json.loads(subprocess.check_output(["ip", "-j", "route", "show", "default"]))[0]["dev"]
-    return f"""global_defs {{
-  enable_script_security
-  script_user root
-}}
-# The node holds the VIP only while its RKE2 supervisor answers.
-vrrp_script chk_rke2 {{
-  script "{CHECK}"
-  interval 2
-  fall 2
-  rise 2
-}}
-vrrp_instance rke2 {{
-  state BACKUP
-  nopreempt
-  interface {iface}
-  virtual_router_id 51
-  priority 100
-  advert_int 1
-  virtual_ipaddress {{
-    {vip}/32
-  }}
-  track_script {{
-    chk_rke2
-  }}
-}}
-"""
-
-
-def units(role):
-    return ["rke2-server", "keepalived"] if role == "server" else ["rke2-agent"]
-
-
 def load_state(path):
     """STATE, created with a fresh token on first use. The token outlives restarts, not the disk."""
     try:
@@ -229,19 +193,12 @@ def settled(path, ip, elect, vip_up):
     return state
 
 
-def apply(env, role, bootstrap):
-    lines = [f"token: {json.dumps(env['RKE2_TOKEN'])}"]
-    if not bootstrap:
-        lines.append(f"server: https://{env['VIP']}:9345")
-    if role == "server":
-        lines.append("tls-san:")
-        lines += [f"  - {h}" for h in (env["NODE_IP"], env["VIP"], env["RANCHER_HOSTNAME"])]
-        write(KEEPALIVED, keepalived_conf(env["VIP"]))
-    # Written last: its presence means apply already ran.
-    write(CONFIG, "\n".join(lines) + "\n", 0o600)
-    # --no-block: rke2 blocks until ready, and beacons must keep going.
-    subprocess.run(["systemctl", "enable", "--now", "--no-block", *units(role)], check=True)
-    print(f"started {role}{' (bootstrap)' if bootstrap else ''}", flush=True)
+def notify(msg):
+    """sd_notify(3) without libsystemd. A leading @ in NOTIFY_SOCKET names an abstract socket."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if addr:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.sendto(msg, "\0" + addr[1:] if addr.startswith("@") else addr)
 
 
 def main():
@@ -255,17 +212,15 @@ def main():
     n = int(env["CONTROL_PLANE_COUNT"])
     state = settled(STATE, ip, lambda me: elect(me, n, lambda beacon: exchange(sock, key, ip, beacon),
                                                 lambda: vip_up(vip)), lambda: vip_up(vip))
-    token, servers = state["token"], [tuple(s) for s in state["servers"]]
-    applied = os.path.exists(CONFIG)
-    if applied:
-        subprocess.run(["systemctl", "enable", "--now", "--no-block", *units(state["role"])], check=True)
+    # Starts rke2-configure, which is ordered after this unit.
+    notify(b"READY=1")
+    print(f"{state['role']}{' (bootstrap)' if state['bootstrap'] else ''}", flush=True)
 
-    # Keep beaconing `decided` so late nodes join rather than elect. Joiners wait for the VIP.
+    # Keep beaconing `decided` so late nodes join rather than elect.
+    token, servers = state["token"], [tuple(s) for s in state["servers"]]
     beacon = lambda: {"ip": ip, "token": token, "state": "decided", "servers": servers}
-    for b in exchange(sock, key, ip, beacon):
-        if b is None and not applied and (state["bootstrap"] or vip_up(vip)):
-            apply(env, state["role"], state["bootstrap"])
-            applied = True
+    for _ in exchange(sock, key, ip, beacon):
+        pass
 
 
 if __name__ == "__main__":

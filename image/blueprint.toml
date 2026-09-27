@@ -32,7 +32,7 @@ name = "qemu-guest-agent"
 name = "keepalived"
 version = "2.2.8-9.el10"
 
-# rke2-server, rke2-agent and keepalived stay disabled: rke2-elect writes their config and starts them.
+# rke2-server, rke2-agent and keepalived stay disabled: rke2-configure writes their config and starts them.
 [customizations.services]
 enabled = ["qemu-guest-agent"]
 
