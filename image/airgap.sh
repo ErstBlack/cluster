@@ -19,7 +19,8 @@ img=docker.io/rockylinux/rockylinux:10@sha256:827d37bc128288ccf160ee318bb3cb92d5
 
 mkdir -p "$cache" output
 files=()
-for e in $(sed 's/#.*//' airgap-images.txt); do
+while read -r e; do
+  [[ -n $e ]] || continue
   if [[ $e == https://* ]]; then
     f=${e##*/} tag=${e%/*}
     tag=${tag##*/}
@@ -41,7 +42,7 @@ for e in $(sed 's/#.*//' airgap-images.txt); do
     fi
   fi
   files+=("$f")
-done
+done < <(sed 's/#.*//' airgap-images.txt)
 
 rpm=(output/airgap-repo/noarch/rke2-airgap-images-*.rpm)
 fresh=1
@@ -65,10 +66,10 @@ dnf -y -q --setopt=install_weak_deps=False install rpm-build createrepo_c zstd j
 mkdir /rt /tmp/rke2
 cd /tmp/rke2
 tar --zstd -xf "/cache/$RKE2" manifest.json
-layers=$(jq -r --arg t "$RUNTIME" '.[] | select(.RepoTags | index($t)) | .Layers[]' manifest.json)
-[[ -n $layers ]] || { echo "$RUNTIME is not in $RKE2" >&2; exit 1; }
-tar --zstd -xf "/cache/$RKE2" $layers
-for l in $layers; do tar -xf "$l" -C /rt; done
+mapfile -t layers < <(jq -r --arg t "$RUNTIME" '.[] | select(.RepoTags | index($t)) | .Layers[]' manifest.json)
+(( ${#layers[@]} )) || { echo "$RUNTIME is not in $RKE2" >&2; exit 1; }
+tar --zstd -xf "/cache/$RKE2" "${layers[@]}"
+for l in "${layers[@]}"; do tar -xf "$l" -C /rt; done
 export PATH=/rt/bin:$PATH
 
 # Stage in rke2 pkg/bootstrap/bootstrap.go skips the runtime pull when data/<refDigest>/bin, charts and .extracted exist.
@@ -84,7 +85,8 @@ containerd --root "$root" --state /run/containerd >/out/airgap/containerd.log 2>
 pid=$!
 for _ in {1..120}; do ctr version >/dev/null 2>&1 && break; sleep 1; done
 ctr version >/dev/null
-for f in $FILES; do
+read -ra files <<<"$FILES"
+for f in "${files[@]}"; do
   echo "importing $f"
   # RKE2 imports all platforms but skips missing content, and the tarball's indexes carry only amd64 blobs. ctr has
   # no skip, so it imports the host platform: the same content ends up present.
