@@ -25,8 +25,11 @@ jobs:
           sudo mkdir -p /mnt/image-builder /var/cache/image-builder
           sudo mount --bind /mnt/image-builder /var/cache/image-builder
 
+      # The runner has no image cache for airgap.sh, so CI builds the image that pulls at first boot.
       - if: steps.cache.outputs.cache-hit != 'true'
         run: image/build.sh
+        env:
+          SKIP_AIRGAP: 1
 
   test:
     needs: image

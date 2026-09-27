@@ -41,7 +41,7 @@ variable "memory_mib" {
 
 variable "disk_gib" {
   type    = number
-  default = 20
+  default = 40
 }
 
 variable "base_image_url" {

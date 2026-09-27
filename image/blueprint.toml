@@ -41,9 +41,9 @@ enabled = ["qemu-guest-agent"]
 path = "/var/lib/rancher/rke2/server/manifests"
 ensure_parents = true
 
-# ponytail: charts and images are pulled at runtime over the NAT network, since blueprint files are
-# text only. Airgap tarballs in /var/lib/rancher/rke2/agent/images/ need a post-build step (or the
-# pxe-tar-xz squashfs build) once nodes lose internet.
+# ponytail: the charts, about 175 KB, are fetched at runtime over the NAT network. The container
+# images come pre-imported from the rke2-airgap-images package (airgap.sh, airgap.toml), except in a
+# SKIP_AIRGAP build, where nodes pull them at first boot.
 [[customizations.files]]
 path = "/var/lib/rancher/rke2/server/manifests/cert-manager.yaml"
 data = '''
