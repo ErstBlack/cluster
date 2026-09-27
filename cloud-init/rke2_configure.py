@@ -54,6 +54,9 @@ def config_yaml(env, role, bootstrap):
     if role == "server":
         lines.append("tls-san:")
         lines += [f"  - {h}" for h in (env["NODE_IP"], env["VIP"], env["RANCHER_HOSTNAME"])]
+        # 5x etcd's defaults (100 ms, 1000 ms): a disk stall of a few seconds does not cost the leader.
+        # ponytail: tuned on shared consumer SSDs; revisit on dedicated disks, where it slows failover.
+        lines += ["etcd-arg:", "  - heartbeat-interval=500", "  - election-timeout=5000"]
     return "\n".join(lines) + "\n"
 
 

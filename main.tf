@@ -167,7 +167,9 @@ resource "libvirt_domain" "node" {
       {
         source = { volume = { pool = var.pool, volume = libvirt_volume.disk[each.key].name } }
         target = { bus = "virtio", dev = "vda" }
-        driver = { type = "qcow2" }
+        # The host ignores guest flushes. Every VM shares the host's disks, and etcd's fsyncs stall behind
+        # the other nodes' image pulls. A host crash can corrupt the disks, which are disposable test VMs.
+        driver = { type = "qcow2", cache = "unsafe" }
       },
       {
         device = "cdrom"
