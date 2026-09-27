@@ -1,7 +1,6 @@
 # Rocky 10 golden image with RKE2 staged. At first boot the rke2-elect unit from cloud-init picks the
 # node's role, and rke2-configure writes /etc/rancher/rke2/config.yaml and starts rke2-server or
-# rke2-agent. RKE2 then
-# applies the HelmCharts below. Build with image/build.sh.
+# rke2-agent. RKE2 then applies the HelmCharts below. Build with image/build.sh.
 # The qcow2 image type already brings cloud-init and shim-x64 and leaves out firewalld.
 name = "rocky-rke2"
 description = "Rocky 10 with RKE2, cert-manager and Rancher staged for first boot"
