@@ -1,8 +1,20 @@
 import os
 import tempfile
 import unittest
+from typing import ClassVar
 
-from rke2_elect import EXPIRE, INTERVAL, SETTLE, elect, load_state, role_of, settled, sign, top, verify
+from rke2_elect import (
+    EXPIRE,
+    INTERVAL,
+    SETTLE,
+    elect,
+    load_state,
+    role_of,
+    settled,
+    sign,
+    top,
+    verify,
+)
 
 A, B, C, D = (9, "10.0.0.1"), (7, "10.0.0.2"), (7, "10.0.0.3"), (1, "10.0.0.4")
 
@@ -35,7 +47,6 @@ class Decide(unittest.TestCase):
         boots = [n for n in nodes if decide(n, [p for p in nodes if p != n], 3)[1]]
         self.assertEqual(boots, [A])
 
-
     def test_identity_is_token_and_ip(self):
         # A rebuilt VM at the bootstrap's ip draws a new token and must not bootstrap again.
         self.assertEqual(role_of((5, A[1]), [A, B]), ("agent", False))
@@ -43,7 +54,11 @@ class Decide(unittest.TestCase):
 
 
 def beacon(node, servers=None):
-    b = {"ip": node[1], "token": node[0], "state": "electing" if servers is None else "decided"}
+    b = {
+        "ip": node[1],
+        "token": node[0],
+        "state": "electing" if servers is None else "decided",
+    }
     return {**b, "servers": servers or []}
 
 
@@ -96,13 +111,18 @@ class State(unittest.TestCase):
 
             def elect_again(me):
                 raise AssertionError("re-elected despite a recorded decision")
+
             again = settled(path, "10.0.0.1", elect_again, lambda: True)
-            self.assertEqual((again["token"], again["role"], again["bootstrap"]),
-                             (first["token"], "server", True))
+            self.assertEqual(
+                (again["token"], again["role"], again["bootstrap"]),
+                (first["token"], "server", True),
+            )
 
     def test_bootstrap_joins_as_agent_when_the_vip_answers(self):
         with tempfile.TemporaryDirectory() as d:
-            state = settled(os.path.join(d, "elect.json"), "10.0.0.1", lambda me: [me], lambda: True)
+            state = settled(
+                os.path.join(d, "elect.json"), "10.0.0.1", lambda me: [me], lambda: True
+            )
             self.assertEqual((state["role"], state["bootstrap"]), ("agent", False))
 
     def test_settle_outlasts_expiry(self):
@@ -111,14 +131,21 @@ class State(unittest.TestCase):
 
 
 class Beacon(unittest.TestCase):
-    body = {"ip": "10.0.0.1", "token": 9, "state": "decided", "servers": [A]}
+    body: ClassVar[dict] = {
+        "ip": "10.0.0.1",
+        "token": 9,
+        "state": "decided",
+        "servers": [A],
+    }
 
     def test_round_trip(self):
         self.assertEqual(verify(b"k", sign(b"k", self.body)), self.body)
 
     def test_wrong_key_or_tampered_is_dropped(self):
         self.assertIsNone(verify(b"other", sign(b"k", self.body)))
-        self.assertIsNone(verify(b"k", sign(b"k", self.body).replace(b'"token": 9', b'"token": 99')))
+        self.assertIsNone(
+            verify(b"k", sign(b"k", self.body).replace(b'"token": 9', b'"token": 99'))
+        )
         self.assertIsNone(verify(b"k", b"not json"))
 
 

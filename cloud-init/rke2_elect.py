@@ -19,6 +19,7 @@ ponytail: no cluster merging. Two clusters formed apart stay apart.
 ponytail: broadcast and VRRP are L2 only. Routed subnets need BGP (MetalLB) and a discovery seed.
 ponytail: virtual_router_id is fixed at 51, so one cluster per L2 segment until merging lands.
 """
+
 import hashlib
 import hmac
 import ipaddress
@@ -56,7 +57,11 @@ def role_of(me, servers):
 
 def digest(key, body):
     """HMAC-SHA256 of body's canonical JSON."""
-    return hmac.new(key, json.dumps(body, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
+    return hmac.new(
+        key,
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def sign(key, body):
@@ -75,7 +80,7 @@ def verify(key, data):
         body["token"] = int(body["token"])
         body["servers"] = [(int(t), str(i)) for t, i in body.get("servers", [])]
         return body
-    except Exception:
+    except Exception:  # noqa: BLE001 - beacons are untrusted network input, and any malformed one is dropped
         return None
 
 
@@ -91,7 +96,7 @@ def exchange(sock, key, ip, beacon):
         sock.settimeout(max(0.01, next_send - time.monotonic()))
         try:
             data, _ = sock.recvfrom(65535)
-        except socket.timeout:
+        except TimeoutError:
             continue
         b = verify(key, data)
         if b and b["ip"] != ip:
@@ -103,9 +108,11 @@ def vip_up(vip):
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(f"https://{vip}:9345/ping", timeout=1, context=ctx) as r:
+        with urllib.request.urlopen(
+            f"https://{vip}:9345/ping", timeout=1, context=ctx
+        ) as r:
             return r.status == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 - any failure to reach the VIP means it is not up yet
         return False
 
 
@@ -142,7 +149,12 @@ def elect(me, n, exchange, vip_up, clock=time.monotonic):
 
     # Nodes that decided apart converge on the decision with the highest bootstrap.
     end = clock() + GRACE
-    beacon = lambda: {"ip": me[1], "token": me[0], "state": "decided", "servers": decision}
+    beacon = lambda: {
+        "ip": me[1],
+        "token": me[0],
+        "state": "decided",
+        "servers": decision,
+    }
     for b in exchange(beacon):
         if b is None:
             if clock() >= end:
@@ -185,7 +197,9 @@ def settled(path, ip, elect, vip_up):
         role, bootstrap = role_of(me, servers)
         # A cluster already answering on the VIP means this node must not start a second one.
         if bootstrap and vip_up():
-            print("VIP answers: joining as an agent instead of bootstrapping", flush=True)
+            print(
+                "VIP answers: joining as an agent instead of bootstrapping", flush=True
+            )
             role, bootstrap = "agent", False
         state.update(role=role, bootstrap=bootstrap, servers=servers)
         write(path, json.dumps(state), 0o600)
@@ -203,15 +217,25 @@ def notify(msg):
 def main():
     env = os.environ
     # VIP carries the site prefix (a.b.c.d/NN). Only the address is used here.
-    key, ip, vip = env["RKE2_TOKEN"].encode(), env["NODE_IP"], str(ipaddress.ip_interface(env["VIP"]).ip)
+    key, ip, vip = (
+        env["RKE2_TOKEN"].encode(),
+        env["NODE_IP"],
+        str(ipaddress.ip_interface(env["VIP"]).ip),
+    )
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.bind(("", PORT))
 
     n = int(env["CONTROL_PLANE_COUNT"])
-    state = settled(STATE, ip, lambda me: elect(me, n, lambda beacon: exchange(sock, key, ip, beacon),
-                                                lambda: vip_up(vip)), lambda: vip_up(vip))
+    state = settled(
+        STATE,
+        ip,
+        lambda me: elect(
+            me, n, lambda beacon: exchange(sock, key, ip, beacon), lambda: vip_up(vip)
+        ),
+        lambda: vip_up(vip),
+    )
     # Starts rke2-configure, which is ordered after this unit.
     notify(b"READY=1")
     print(f"{state['role']}{' (bootstrap)' if state['bootstrap'] else ''}", flush=True)

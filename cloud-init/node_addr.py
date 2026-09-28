@@ -11,6 +11,7 @@ the unit's start job only ever succeeds and the units that require it stay queue
 
 ponytail: a node with two NICs on the site network, or two cabled NICs, takes the first by name.
 """
+
 import fcntl
 import hashlib
 import ipaddress
@@ -59,18 +60,27 @@ def pick(vip, addrs):
 def candidate(machine_id, attempt, cidr, exclude):
     """The host address for this attempt, spread over cidr by sha256 of the machine-id. None if it is
     in exclude, and the caller moves to the next attempt."""
-    h = int.from_bytes(hashlib.sha256(f"{machine_id}:{attempt}".encode()).digest(), "big")
+    h = int.from_bytes(
+        hashlib.sha256(f"{machine_id}:{attempt}".encode()).digest(), "big"
+    )
     ip = cidr.network_address + 1 + h % (cidr.num_addresses - 2)
     return None if ip in exclude else ip
 
 
 def iface():
     """The first ethernet device by name that NetworkManager manages and that has a carrier."""
-    out = subprocess.run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"],
-                         capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(
+        ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
     for line in sorted(out.splitlines()):
         dev, kind, state = line.split(":", 2)
-        if kind == "ethernet" and state not in ("unavailable", "unmanaged"):  # unavailable: no carrier
+        if kind == "ethernet" and state not in (
+            "unavailable",
+            "unmanaged",
+        ):  # unavailable: no carrier
             return dev
     raise LookupError("no ethernet device with a carrier")
 
@@ -78,12 +88,32 @@ def iface():
 def assign(iface, ip, prefix, gateway, dns):
     """Save and activate a static profile. False if activation fails, as it does on an address conflict.
     Its priority beats cloud-init's DHCP profile (120), so NetworkManager brings it up on every boot."""
-    nmcli = lambda *a: subprocess.run(["nmcli", *a], capture_output=True, text=True)
+    nmcli = lambda *a: subprocess.run(
+        ["nmcli", *a], capture_output=True, text=True, check=False
+    )
     nmcli("con", "delete", PROFILE)  # left by an interrupted boot
-    args = ["con", "add", "type", "ethernet", "con-name", PROFILE, "ifname", iface,
-            "ipv4.method", "manual", "ipv4.addresses", f"{ip}/{prefix}", "ipv4.may-fail", "no",
-            "ipv4.dad-timeout", "3000", "connection.autoconnect-priority", "999",
-            "ipv6.method", "disabled"]  # IPv4 only for now. #15 notes IPv6 discovery to revisit.
+    args = [
+        "con",
+        "add",
+        "type",
+        "ethernet",
+        "con-name",
+        PROFILE,
+        "ifname",
+        iface,
+        "ipv4.method",
+        "manual",
+        "ipv4.addresses",
+        f"{ip}/{prefix}",
+        "ipv4.may-fail",
+        "no",
+        "ipv4.dad-timeout",
+        "3000",
+        "connection.autoconnect-priority",
+        "999",
+        "ipv6.method",
+        "disabled",
+    ]  # IPv4 only for now. #15 notes IPv6 discovery to revisit.
     args += ["ipv4.gateway", gateway] if gateway else ["ipv4.routes", "0.0.0.0/0"]
     if dns:
         args += ["ipv4.dns", dns]
@@ -98,14 +128,21 @@ def assign(iface, ip, prefix, gateway, dns):
 
 def restore():
     """Bring up the profile a previous boot saved. False if there is none or activation fails."""
-    return subprocess.run(["nmcli", "con", "up", PROFILE], capture_output=True, text=True).returncode == 0
+    return (
+        subprocess.run(
+            ["nmcli", "con", "up", PROFILE], capture_output=True, text=True, check=False
+        ).returncode
+        == 0
+    )
 
 
 def main():
     env = os.environ
     vip = ipaddress.ip_interface(env["VIP"])
     if vip.network.prefixlen > 30:
-        sys.exit(f"VIP={env['VIP']} must carry the site prefix, /30 or shorter, e.g. VIP=192.168.150.10/24")
+        sys.exit(
+            f"VIP={env['VIP']} must carry the site prefix, /30 or shorter, e.g. VIP=192.168.150.10/24"
+        )
     gateway, dns = env.get("GATEWAY", ""), env.get("DNS", "")
     exclude = {ipaddress.ip_address(a) for a in (str(vip.ip), gateway, dns) if a}
     with open(MACHINE_ID) as f:
@@ -134,7 +171,9 @@ def main():
             continue
         if assign(name, ip, vip.network.prefixlen, gateway, dns):
             break
-        time.sleep(INTERVAL)  # spaces out a persistent nmcli error and two nodes probing one address
+        time.sleep(
+            INTERVAL
+        )  # spaces out a persistent nmcli error and two nodes probing one address
     write(NODE_ENV, f"NODE_IP={ip}\nNODE_IFACE={name}\n")
     print(f"{ip} on {name}", flush=True)
 

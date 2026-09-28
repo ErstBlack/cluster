@@ -31,8 +31,45 @@ jobs:
         env:
           SKIP_AIRGAP: 1
 
+  # One job per justfile recipe, so the checks run in parallel with the image build.
+  check:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [unit, tofu-check, shellcheck, ruff, actionlint, hadolint]
+        include:
+          - check: actionlint
+            install: |
+              bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+              sudo mv actionlint /usr/local/bin/
+          - check: hadolint
+            install: |
+              sudo curl -fsSLo /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-x86_64
+              sudo chmod +x /usr/local/bin/hadolint
+    env:
+      TOFU: tofu
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: extractions/setup-just@v4
+
+      - if: matrix.check == 'tofu-check'
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_wrapper: false
+
+      # setup-uv publishes no major-version tags after v7, so it is pinned to a release.
+      - if: matrix.check == 'ruff'
+        uses: astral-sh/setup-uv@v10.2.0
+
+      - if: matrix.install
+        run: ${{ matrix.install }}
+
+      - run: just ${{ matrix.check }}
+
   test:
-    needs: image
+    needs: [image, check]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -52,7 +89,8 @@ jobs:
 
       - uses: extractions/setup-just@v4
 
-      - run: just check
+      # tofu test needs an initialised directory.
+      - run: just tofu init -backend=false
 
       - name: Install libvirt
         run: |
