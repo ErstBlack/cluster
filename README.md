@@ -108,6 +108,9 @@ rke2-runtime binaries already staged in `/var/lib/rancher/rke2/data`.
 The seeded state is tied to the RKE2 release's containerd, so bumping RKE2 means updating the tarball URL
 in the manifest. `SKIP_AIRGAP=1 image/build.sh` builds without the package and nodes pull at first boot.
 CI does that. The host needs `skopeo` and `curl`. `rpmbuild` and `createrepo_c` run in a Rocky 10 container.
+With `CLUSTER_IMAGE_ARCHIVE` set, `image/build.sh` moves the finished image to
+`$CLUSTER_IMAGE_ARCHIVE/<UTC timestamp>/`, copies `build.log` there, and leaves `image/output/rocky-rke2.qcow2`
+as a symlink to it. `./tofu.sh` mounts that directory so the path below still resolves.
 
 ```sh
 image/build.sh
