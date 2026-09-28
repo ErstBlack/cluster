@@ -45,7 +45,8 @@ jobs:
     timeout-minutes: 60
     outputs:
       key: ${{ steps.key.outputs.key }}
-      built: ${{ steps.cache.outputs.cache-hit != 'true' }}
+      # Only a save that ran and succeeded counts, so a job that failed before the build never triggers a prune.
+      built: ${{ steps.save.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -68,7 +69,8 @@ jobs:
           image/build.sh
 
       # Saved before the test, so a failed test does not cost the next run a rebuild.
-      - if: steps.cache.outputs.cache-hit != 'true'
+      - id: save
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: image/output/rocky-rke2.qcow2
@@ -129,5 +131,6 @@ jobs:
 
       - if: github.ref == 'refs/heads/master'
         run: |
+          : "${KEY:?an empty key would select every entry}"
           gh cache list --ref refs/heads/master --key rocky-rke2- --limit 100 --json id,key \
             --jq ".[] | select(.key != \"$KEY\") | .id" | xargs -r -n1 gh cache delete
