@@ -48,10 +48,9 @@ locals {
   }
   nodes = { for k, v in local.slots : k => v if tonumber(k) <= var.node_count }
 
-  # Nodes elect their RKE2 roles at boot. keepalived floats the VIP over the servers, so joins and
-  # Rancher never depend on one node. .10 sits below the slots (.11-.19) and the DHCP range.
-  vip              = cidrhost(local.network_cidr, 10)
-  rancher_hostname = "rancher.${local.vip}.sslip.io"
+  # Nodes elect their RKE2 roles at boot. keepalived floats the VIP over the servers, so joins never
+  # depend on one node. .10 sits below the slots (.11-.19) and the DHCP range.
+  vip = cidrhost(local.network_cidr, 10)
 }
 
 resource "random_password" "rke2_token" {
@@ -117,7 +116,6 @@ resource "libvirt_cloudinit_disk" "seed" {
     token               = random_password.rke2_token.result
     vip                 = local.vip
     control_plane_count = var.control_plane_count
-    rancher_hostname    = local.rancher_hostname
     addr_py             = file("${path.module}/cloud-init/node_addr.py")
     elect_py            = file("${path.module}/cloud-init/rke2_elect.py")
     configure_py        = file("${path.module}/cloud-init/rke2_configure.py")

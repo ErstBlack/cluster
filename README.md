@@ -1,6 +1,6 @@
 # cluster
 
-A Rocky Linux 10 golden image (`image/`) whose nodes form an RKE2 + Rancher cluster at first boot
+A Rocky Linux 10 golden image (`image/`) whose nodes form an RKE2 cluster at first boot
 through cloud-init and `cloud-init/rke2_elect.py`. Real deployments are independent physical and
 virtual nodes, each started on its own with no orchestrator.
 
@@ -67,8 +67,8 @@ rebuilds every VM from scratch: overlays and domains are destroyed and re-create
 
 `image/build.sh` builds `image/output/rocky-rke2.qcow2` (gitignored) from `image/blueprint.toml` with
 osbuild `image-builder` in a pinned, privileged root podman container. The image carries `rke2-server`,
-`rke2-agent` and `keepalived` (all disabled), `rke2-selinux`, `kernel-modules-extra`, `qemu-guest-agent`,
-and HelmCharts for cert-manager and Rancher in `/var/lib/rancher/rke2/server/manifests/`.
+`rke2-agent` and `keepalived` (all disabled), `rke2-selinux`, `kernel-modules-extra` and
+`qemu-guest-agent`.
 
 Every node gets the same user-data and meta-data and works out the rest at boot. cloud-init names
 the node `node-` plus the first 10 hex characters of `/etc/machine-id`, then starts three units in
@@ -86,12 +86,11 @@ bootstraps the cluster. If the elected bootstrap dies before it
 starts RKE2, including within about 10 s before the decision, the others wait on the VIP forever.
 Recover with `./tofu.sh destroy` and `./tofu.sh apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
 VIP and joins as an agent. The servers run keepalived, which holds the VIP `192.168.150.10` on a server
-whose RKE2 supervisor answers. Nodes join through `https://192.168.150.10:9345`, and Rancher is served at
-`https://rancher.192.168.150.10.sslip.io`. After a reboot the node keeps its role. Nodes fetch the two
-charts at runtime. The cloud-init needs this image. The GenericCloud default has no RKE2.
+whose RKE2 supervisor answers. Nodes join through `https://192.168.150.10:9345`. After a reboot the node
+keeps its role. The cloud-init needs this image. The GenericCloud default has no RKE2.
 
-The container images ship pre-imported. `image/airgap-images.txt` lists the RKE2 airgap tarball and the
-cert-manager and Rancher image refs. `image/airgap.sh` fetches whatever is missing into a cache
+The container images ship pre-imported. `image/airgap-images.txt` lists the RKE2 airgap tarball.
+`image/airgap.sh` fetches whatever is missing into a cache
 (default `/srv/rocky-cluster/images/agent-images`), imports everything with RKE2's own containerd into
 `/var/lib/rancher/rke2/agent/containerd`, and packages that state as the RPM `rke2-airgap-images` in the
 local repo `image/output/airgap-repo`. `image/build.sh` runs it, adds the repo with `--extra-repo` and

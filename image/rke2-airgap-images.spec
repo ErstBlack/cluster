@@ -7,7 +7,7 @@
 Name:           rke2-airgap-images
 Version:        1
 Release:        1
-Summary:        Pre-imported RKE2, cert-manager and Rancher images for RKE2's containerd
+Summary:        Pre-imported RKE2 images for RKE2's containerd
 License:        Various
 BuildArch:      noarch
 Source0:        containerd-state.tar.zst

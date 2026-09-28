@@ -1,12 +1,11 @@
 # Rocky 10 golden image with RKE2 staged. At first boot the rke2-elect unit from cloud-init picks the
 # node's role, and rke2-configure writes /etc/rancher/rke2/config.yaml and starts rke2-server or
-# rke2-agent. RKE2 then applies the HelmCharts below. Build with image/build.sh.
+# rke2-agent. Build with image/build.sh.
 # The qcow2 image type already brings cloud-init and shim-x64 and leaves out firewalld.
 name = "rocky-rke2"
-description = "Rocky 10 with RKE2, cert-manager and Rancher staged for first boot"
+description = "Rocky 10 with RKE2 staged for first boot"
 version = "0.1.0"
 
-# RKE2 1.36 is the newest minor Rancher v2.15.2 supports (chart kubeVersion < 1.37.0-0).
 # Comes from the rpm.rancher.io repos in rocky-10.2.json, GPG checked at build time.
 [[packages]]
 name = "rke2-server"
@@ -35,47 +34,3 @@ version = "2.2.8-9.el10"
 # rke2-server, rke2-agent and keepalived stay disabled: rke2-configure writes their config and starts them.
 [customizations.services]
 enabled = ["qemu-guest-agent"]
-
-# The RPMs do not create this directory. Without mode/user/group an existing one is fine.
-[[customizations.directories]]
-path = "/var/lib/rancher/rke2/server/manifests"
-ensure_parents = true
-
-# ponytail: the charts, about 175 KB, are fetched at runtime over the NAT network. The container
-# images come pre-imported from the rke2-airgap-images package (airgap.sh, airgap.toml), except in a
-# SKIP_AIRGAP build, where nodes pull them at first boot.
-[[customizations.files]]
-path = "/var/lib/rancher/rke2/server/manifests/cert-manager.yaml"
-data = '''
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: cert-manager
-  namespace: kube-system
-spec:
-  repo: https://charts.jetstack.io
-  chart: cert-manager
-  version: v1.21.2
-  targetNamespace: cert-manager
-  createNamespace: true
-  valuesContent: |-
-    crds:
-      enabled: true
-'''
-
-# The hostname comes from a HelmChartConfig named rancher that cloud-init writes at first boot.
-[[customizations.files]]
-path = "/var/lib/rancher/rke2/server/manifests/rancher.yaml"
-data = '''
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: rancher
-  namespace: kube-system
-spec:
-  repo: https://releases.rancher.com/server-charts/stable
-  chart: rancher
-  version: 2.15.2
-  targetNamespace: cattle-system
-  createNamespace: true
-'''
