@@ -20,7 +20,7 @@ actually exists. The contract makes the part swappable, not an interface.
 ## One tofu state for every checkout
 
 The `backend "local"` block in `main.tf` keeps state at `/srv/rocky-cluster/terraform.tfstate`,
-and `tofu.sh` mounts that directory into the container. Every checkout and every worktree under
+and `just tofu` runs the host's `tofu` against it. Every checkout and every worktree under
 `.claude/worktrees/` therefore drives the same VMs on vcows under one lock. An apply from a
 worktree replaces whatever arrangement another session left running, and a destroy removes it. A
 lock error means another session is mid-run. `tofu test` ignores the backend and does not touch
@@ -29,7 +29,7 @@ this state.
 ## Commands
 
 `just` lists the recipes. `just check` runs the checks CI runs before `tofu test`. `just tofu <verb>`
-goes through `tofu.sh`, which shares the `/srv/rocky-cluster` state (see "One tofu state for every
+runs the host's `tofu` against the shared `/srv/rocky-cluster` state (see "One tofu state for every
 checkout").
 
 ## Refer to code by name

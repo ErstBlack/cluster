@@ -1,5 +1,7 @@
 terraform {
-  # Shared by every checkout on this host. tofu.sh mounts the directory at the same path.
+  required_version = ">= 1.12"
+
+  # Shared by every checkout on this host.
   backend "local" {
     path = "/srv/rocky-cluster/terraform.tfstate"
   }

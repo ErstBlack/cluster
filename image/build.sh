@@ -34,7 +34,7 @@ if grep -q 'scriptlet failed' output/build.log; then
   echo "a %post scriptlet failed, see output/build.log; output/rocky-rke2.qcow2 is incomplete" >&2
   exit 1
 fi
-# CLUSTER_IMAGE_ARCHIVE moves the finished image out of the checkout and leaves a symlink for tofu.sh.
+# CLUSTER_IMAGE_ARCHIVE moves the finished image out of the checkout and leaves a symlink in its place.
 if [[ -n ${CLUSTER_IMAGE_ARCHIVE:-} ]]; then
   dest=$CLUSTER_IMAGE_ARCHIVE/$(date -u +%Y%m%dT%H%M%SZ)
   mkdir -p "$dest"
