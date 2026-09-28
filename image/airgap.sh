@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
 # Package the images in airgap-images.txt, pre-imported, as the RPM rke2-airgap-images in output/airgap-repo.
-# Usage: airgap.sh [cache dir]
 #
 # Fetch: a https:// line is the RKE2 airgap tarball. Its release must match the rke2-server pin in blueprint.toml, and a
-# download is checked against the release's sha256sum-amd64.txt. Any other line is an image ref, saved with skopeo as
-# <ref minus registry, / and : as _>.tar. Only missing files are fetched.
+# download is checked against the release's sha256sum-amd64.txt. Only missing files are fetched.
 # Seed: RKE2's own containerd, from the rke2-runtime image in that tarball, imports every file into namespace k8s.io
 # of a root at /var/lib/rancher/rke2/agent/containerd with the overlayfs snapshotter. It sets the pinned labels RKE2's
 # importer sets (k3s preloadFile/labelImages). The content store, meta.db and unpacked snapshots are tarred with their
 # overlay whiteouts and xattrs. The state is tied to this RKE2 release's containerd, so an RKE2 bump means a reseed.
 # The tar also carries rke2-runtime's bin and charts, staged where RKE2's bootstrap Stage looks, so RKE2 skips pulling
 # that image from the registry at first start.
-# Package: rpmbuild and createrepo_c run in a Rocky 10 container, so the host needs only podman, curl and skopeo.
+# Package: rpmbuild and createrepo_c run in a Rocky 10 container, so the host needs only podman and curl.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
-cache=${1:-/srv/rocky-cluster/images/agent-images}
+cache=/srv/rocky-cluster/images/agent-images
 img=docker.io/rockylinux/rockylinux:10@sha256:827d37bc128288ccf160ee318bb3cb92d591164cb217e92f8bc61e3982ae1834
 
 mkdir -p "$cache" output
@@ -32,14 +30,6 @@ while read -r e; do
       mv "$cache/$f.part" "$cache/$f"
     fi
     rke2=$f runtime=rancher/rke2-runtime:${tag/\%2B/-}
-  else
-    r=${e#*/}
-    f=${r//[\/:]/_}.tar
-    if [[ ! -e $cache/$f ]]; then
-      rm -f "$cache/$f.part"
-      skopeo copy "docker://$e" "docker-archive:$cache/$f.part:$e"
-      mv "$cache/$f.part" "$cache/$f"
-    fi
   fi
   files+=("$f")
 done < <(sed 's/#.*//' airgap-images.txt)
