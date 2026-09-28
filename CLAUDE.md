@@ -1,7 +1,9 @@
 # cluster
 
-`README.md` says what this project is until the design doc replaces this line.
+Independent edge nodes that form a fresh Kubernetes cluster for each run. `DESIGN.md` records the design
+so far. It is still in development and likely to change.
 
+@DESIGN.md
 @.claude/rules/github-issues.md
 
 ## Parts meet at contracts, not code layers
