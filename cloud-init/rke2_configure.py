@@ -5,6 +5,7 @@ On first boot a node that does not bootstrap waits for the VIP to answer, so it 
 CONFIG is written last. On every boot the role's units are enabled and started, so a failed start or a
 power loss after CONFIG is written is repaired on the next run.
 """
+import ipaddress
 import json
 import os
 import subprocess
@@ -65,7 +66,8 @@ def units(role):
 
 
 def main():
-    env = os.environ
+    # VIP carries the site prefix (a.b.c.d/NN). Only the address is used here.
+    env = {**os.environ, "VIP": str(ipaddress.ip_interface(os.environ["VIP"]).ip)}
     try:
         with open(STATE) as f:
             state = json.load(f)

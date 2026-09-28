@@ -21,6 +21,7 @@ ponytail: virtual_router_id is fixed at 51, so one cluster per L2 segment until 
 """
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import secrets
@@ -201,7 +202,8 @@ def notify(msg):
 
 def main():
     env = os.environ
-    key, ip, vip = env["RKE2_TOKEN"].encode(), env["NODE_IP"], env["VIP"]
+    # VIP carries the site prefix (a.b.c.d/NN). Only the address is used here.
+    key, ip, vip = env["RKE2_TOKEN"].encode(), env["NODE_IP"], str(ipaddress.ip_interface(env["VIP"]).ip)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)

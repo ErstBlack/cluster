@@ -37,19 +37,18 @@ locals {
   # Fixed so that scaling never changes the network: the network resource is replaced on any change.
   network_cidr = "192.168.150.0/24"
 
-  # Reservations cover every slot the MAC :0N / IP .1N scheme allows, so node_count only adds or removes VMs.
+  # Every slot the MAC :0N scheme allows. node_count takes the first N. Nodes assign their own addresses.
   slots = {
     for n in range(1, 10) : tostring(n) => {
       name     = "Rocky-Cluster-${n}"
       hostname = "${local.prefix}-${n}"
       mac      = format("52:54:00:c1:00:%02x", n)
-      ip       = cidrhost(local.network_cidr, 10 + n)
     }
   }
   nodes = { for k, v in local.slots : k => v if tonumber(k) <= var.node_count }
 
   # Nodes elect their RKE2 roles at boot. keepalived floats the VIP over the servers, so joins never
-  # depend on one node. .10 sits below the slots (.11-.19) and the DHCP range.
+  # depend on one node. Nodes never assign the VIP or the host's .1 to themselves.
   vip = cidrhost(local.network_cidr, 10)
 }
 
@@ -66,13 +65,6 @@ resource "libvirt_network" "cluster" {
   ips = [{
     address = cidrhost(local.network_cidr, 1)
     prefix  = tonumber(split("/", local.network_cidr)[1])
-    dhcp = {
-      ranges = [{
-        start = cidrhost(local.network_cidr, 100)
-        end   = cidrhost(local.network_cidr, 254)
-      }]
-      hosts = [for n, v in local.slots : { mac = v.mac, ip = v.ip, name = v.hostname }]
-    }
   }]
 }
 
@@ -108,13 +100,16 @@ resource "libvirt_volume" "disk" {
   }
 }
 
-# One seed for every node. Each node sets its own hostname and finds its own address at boot.
+# One seed for every node. Each node sets its own hostname and assigns its own address at boot.
+# The host's .1 is the gateway and DNS, since nodes still pull images at first boot (#14).
 resource "libvirt_cloudinit_disk" "seed" {
   name = "${local.prefix}-seed"
   user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
     ssh_keys            = local.ssh_keys
     token               = random_password.rke2_token.result
-    vip                 = local.vip
+    vip                 = "${local.vip}/${split("/", local.network_cidr)[1]}"
+    gateway             = cidrhost(local.network_cidr, 1)
+    dns                 = cidrhost(local.network_cidr, 1)
     control_plane_count = var.control_plane_count
     addr_py             = file("${path.module}/cloud-init/node_addr.py")
     elect_py            = file("${path.module}/cloud-init/rke2_elect.py")

@@ -14,7 +14,7 @@ variable "node_count" {
 
   validation {
     condition     = var.node_count >= 1 && var.node_count <= 9 && floor(var.node_count) == var.node_count
-    error_message = "node_count must be a whole number from 1 to 9: MACs end :0N and IPs end .1N."
+    error_message = "node_count must be a whole number from 1 to 9: MACs end :0N."
   }
 }
 
