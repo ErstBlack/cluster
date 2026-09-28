@@ -8,28 +8,27 @@ permissions:
   contents: read
 
 jobs:
+  # Every run builds the image. The cache only carries it to the test job, and cache-cleanup deletes it after, so
+  # entries never pile up past the repo's cache limit.
   image:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
-      - id: cache
-        uses: actions/cache@v6
-        with:
-          path: image/output/
-          key: rocky-rke2-${{ hashFiles('image/*') }}
-
       # The osbuild store can outgrow the free space on /, so keep it on the /mnt disk.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: |
+      - run: |
           sudo mkdir -p /mnt/image-builder /var/cache/image-builder
           sudo mount --bind /mnt/image-builder /var/cache/image-builder
 
       # The runner has no image cache for airgap.sh, so CI builds the image that pulls at first boot.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: image/build.sh
+      - run: image/build.sh
         env:
           SKIP_AIRGAP: 1
+
+      - uses: actions/cache/save@v6
+        with:
+          path: image/output/
+          key: rocky-rke2-${{ github.run_id }}
 
   # One job per justfile recipe, so the checks run in parallel with the image build.
   check:
@@ -72,7 +71,7 @@ jobs:
       - uses: actions/cache/restore@v6
         with:
           path: image/output/
-          key: rocky-rke2-${{ hashFiles('image/*') }}
+          key: rocky-rke2-${{ github.run_id }}
           fail-on-cache-miss: true
 
       - uses: opentofu/setup-opentofu@v2
@@ -109,3 +108,15 @@ jobs:
       - run: just tofu test
         env:
           TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
+
+  cache-cleanup:
+    needs: [image, test]
+    if: always() && needs.image.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - run: gh cache delete "rocky-rke2-${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
