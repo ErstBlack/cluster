@@ -37,15 +37,14 @@ locals {
   # Fixed so that scaling never changes the network: the network resource is replaced on any change.
   network_cidr = "192.168.150.0/24"
 
-  # Every slot the MAC :0N scheme allows. node_count takes the first N. Nodes assign their own addresses.
-  slots = {
-    for n in range(1, 10) : tostring(n) => {
+  # The MAC :0N scheme allows nodes 1 to 9. Nodes assign their own addresses.
+  nodes = {
+    for n in range(1, var.node_count + 1) : tostring(n) => {
       name     = "Rocky-Cluster-${n}"
       hostname = "${local.prefix}-${n}"
       mac      = format("52:54:00:c1:00:%02x", n)
     }
   }
-  nodes = { for k, v in local.slots : k => v if tonumber(k) <= var.node_count }
 
   # Nodes elect their RKE2 roles at boot. keepalived floats the VIP over the servers, so joins never
   # depend on one node. Nodes never assign the VIP or the host's .1 to themselves.
