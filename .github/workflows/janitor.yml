@@ -1,0 +1,33 @@
+# Removes the Headscale users of runs that died before their cleanup job ran.
+name: janitor
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: Remove ci-* users older than this many hours. A value below a live run's age deletes that run's user.
+        type: number
+        default: 3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: janitor
+  cancel-in-progress: false
+
+jobs:
+  janitor:
+    runs-on: ubuntu-24.04
+    environment: headscale
+    steps:
+      - uses: actions/checkout@v7
+
+      # A scheduled run has no inputs.
+      - run: ci/headscale.sh janitor "${HOURS:-3}"
+        env:
+          HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+          HEADSCALE_API_KEY: ${{ secrets.HEADSCALE_API_KEY }}
+          HOURS: ${{ inputs.hours }}
