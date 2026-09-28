@@ -65,15 +65,15 @@ def candidate(machine_id, attempt, cidr, exclude):
     return None if ip in exclude else ip
 
 
+def nmcli(*a):
+    return subprocess.run(["nmcli", *a], capture_output=True, text=True, check=False)
+
+
 def iface():
     """The first ethernet device by name that NetworkManager manages and that has a carrier."""
-    out = subprocess.run(
-        ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    for line in sorted(out.splitlines()):
+    r = nmcli("--terse", "--fields", "DEVICE,TYPE,STATE", "device")
+    r.check_returncode()
+    for line in sorted(r.stdout.splitlines()):
         dev, kind, state = line.split(":", 2)
         if kind == "ethernet" and state not in (
             "unavailable",
@@ -86,9 +86,6 @@ def iface():
 def assign(iface, ip, prefix, gateway, dns):
     """Save and activate a static profile. False if activation fails, as it does on an address conflict.
     Its priority beats cloud-init's DHCP profile (120), so NetworkManager brings it up on every boot."""
-    nmcli = lambda *a: subprocess.run(
-        ["nmcli", *a], capture_output=True, text=True, check=False
-    )
     nmcli("con", "delete", PROFILE)  # left by an interrupted boot
     args = [
         "con",
@@ -126,12 +123,7 @@ def assign(iface, ip, prefix, gateway, dns):
 
 def restore():
     """Bring up the profile a previous boot saved. False if there is none or activation fails."""
-    return (
-        subprocess.run(
-            ["nmcli", "con", "up", PROFILE], capture_output=True, text=True, check=False
-        ).returncode
-        == 0
-    )
+    return nmcli("con", "up", PROFILE).returncode == 0
 
 
 def main():
