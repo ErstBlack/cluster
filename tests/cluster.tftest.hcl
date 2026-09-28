@@ -25,3 +25,13 @@ run "cluster_ready" {
     servers = 3
   }
 }
+
+run "vip_failover" {
+  module {
+    source = "./tests/failover"
+  }
+
+  variables {
+    vip = run.apply.vip
+  }
+}
