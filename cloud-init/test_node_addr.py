@@ -15,16 +15,16 @@ NET = ipaddress.ip_network("192.168.150.0/24")
 class Pick(unittest.TestCase):
     def test_takes_the_address_on_the_vips_subnet(self):
         found = [
-            ("lo", "127.0.0.1", "255.0.0.0"),
-            ("eth0", "10.0.0.5", "255.255.255.0"),
-            ("eth1", "192.168.150.11", "255.255.255.0"),
+            ("lo", "127.0.0.1"),
+            ("eth0", "10.0.0.5"),
+            ("eth1", "192.168.150.11"),
         ]
         self.assertEqual(pick(VIP, found), ("eth1", "192.168.150.11"))
 
     def test_skips_the_vip_itself(self):
         found = [
-            ("eth0", "192.168.150.10", "255.255.255.0"),
-            ("eth0", "192.168.150.11", "255.255.255.0"),
+            ("eth0", "192.168.150.10"),
+            ("eth0", "192.168.150.11"),
         ]
         self.assertEqual(pick(VIP, found), ("eth0", "192.168.150.11"))
 
@@ -33,19 +33,19 @@ class Pick(unittest.TestCase):
             pick(
                 VIP,
                 [
-                    ("lo", "127.0.0.1", "255.0.0.0"),
-                    ("eth0", "10.0.0.5", "255.255.255.0"),
+                    ("lo", "127.0.0.1"),
+                    ("eth0", "10.0.0.5"),
                 ],
             )
 
     def test_matches_by_the_vips_prefix_not_the_addresss_own(self):
-        # Its own /16 holds the VIP, but the address is outside the VIP's /24.
+        # Only the VIP's /24 counts. 192.168.151.5 is outside it, even though a /16 around it holds the VIP.
         self.assertEqual(
             pick(
                 VIP,
                 [
-                    ("eth0", "192.168.151.5", "255.255.0.0"),
-                    ("eth1", "192.168.150.20", "255.255.255.255"),
+                    ("eth0", "192.168.151.5"),
+                    ("eth1", "192.168.150.20"),
                 ],
             ),
             ("eth1", "192.168.150.20"),
@@ -134,7 +134,7 @@ class Assign(unittest.TestCase):
 
 class Addrs(unittest.TestCase):
     def test_reads_loopback(self):
-        self.assertIn(("lo", "127.0.0.1", "255.0.0.0"), addrs())
+        self.assertIn(("lo", "127.0.0.1"), addrs())
 
 
 class Main(unittest.TestCase):
@@ -170,9 +170,7 @@ class Main(unittest.TestCase):
         return a, sleep, write, [c.args[0] for c in run.call_args_list]
 
     def test_keeps_an_existing_address(self):
-        a, _, write, nmcli = self.run_main(
-            [[("eth0", "192.168.150.11", "255.255.255.0")]]
-        )
+        a, _, write, nmcli = self.run_main([[("eth0", "192.168.150.11")]])
         a.assert_not_called()
         self.assertEqual(nmcli, [])
         write.assert_called_once_with(
@@ -182,7 +180,7 @@ class Main(unittest.TestCase):
     def test_brings_up_the_saved_profile_instead_of_replacing_it(self):
         # assign=None: a delete from the real assign would show up in nmcli.
         _, _, write, nmcli = self.run_main(
-            [[], [("eth0", "192.168.150.77", "255.255.255.0")]],
+            [[], [("eth0", "192.168.150.77")]],
             assign=None,
             nmcli=[done()],
         )
@@ -192,7 +190,7 @@ class Main(unittest.TestCase):
         )
 
     def test_waits_for_a_carrier_instead_of_failing(self):
-        lo = [("lo", "127.0.0.1", "255.0.0.0")]
+        lo = [("lo", "127.0.0.1")]
         a, sleep, _, _ = self.run_main(
             [lo, lo], iface=[LookupError("no carrier"), "eth0"]
         )
@@ -200,7 +198,7 @@ class Main(unittest.TestCase):
         a.assert_called_once()
 
     def test_moves_to_the_next_attempt_after_a_conflict(self):
-        lo = [("lo", "127.0.0.1", "255.0.0.0")]
+        lo = [("lo", "127.0.0.1")]
         exclude = {ipaddress.ip_address("192.168.150.10")}
         first, second = (candidate("abc", n, NET, exclude) for n in (0, 1))
         a, sleep, write, _ = self.run_main(
