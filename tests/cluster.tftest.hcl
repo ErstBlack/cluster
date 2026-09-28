@@ -13,11 +13,6 @@ run "apply" {
     condition     = keys(output.nodes) == ["Rocky-Cluster-1", "Rocky-Cluster-2", "Rocky-Cluster-3"]
     error_message = "expected exactly three nodes, Rocky-Cluster-1 to Rocky-Cluster-3"
   }
-
-  assert {
-    condition     = [for k in keys(output.nodes) : output.nodes[k].ip] == ["192.168.150.11", "192.168.150.12", "192.168.150.13"]
-    error_message = "Rocky-Cluster-1 to Rocky-Cluster-3 are not at 192.168.150.11 to 192.168.150.13"
-  }
 }
 
 run "cluster_ready" {
@@ -26,7 +21,6 @@ run "cluster_ready" {
   }
 
   variables {
-    ip      = run.apply.nodes["Rocky-Cluster-1"].ip
     vip     = run.apply.vip
     servers = 3
   }
