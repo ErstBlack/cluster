@@ -31,4 +31,13 @@ image:
 
 # Run tofu, e.g. just tofu plan
 tofu *args:
-    if [ -d /srv/rocky-cluster ]; then mkdir -p /srv/rocky-cluster/tmp; export TMPDIR=/srv/rocky-cluster/tmp; fi; tofu {{args}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The provider writes the cloud-init ISOs, which hold the join token, world-readable under TMPDIR. Keep them in
+    # the 0700 state directory. CI's runner is single-use.
+    if [[ -z ${CI:-} ]]; then
+      [[ -d /srv/rocky-cluster ]] || { echo "missing /srv/rocky-cluster, see README" >&2; exit 1; }
+      mkdir -p /srv/rocky-cluster/tmp
+      export TMPDIR=/srv/rocky-cluster/tmp
+    fi
+    exec tofu {{args}}
