@@ -10,26 +10,68 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-24.04
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      built: ${{ steps.cache.outputs.cache-hit != 'true' }}
     steps:
       - uses: actions/checkout@v7
 
+      # hashFiles is not available in job outputs, so a step records the key.
+      - id: key
+        run: echo "key=rocky-rke2-airgap-${{ hashFiles('image/*') }}" >> "$GITHUB_OUTPUT"
+
+      # The cache only carries the image between runs. test gets it as an artifact, so image-cache can prune entries
+      # without failing a run that is still in flight. The airgap- prefix keeps pre-airgap entries from being restored.
       - id: cache
         uses: actions/cache@v6
         with:
-          path: image/output/
-          key: rocky-rke2-${{ hashFiles('image/*') }}
+          path: image/output/rocky-rke2.qcow2
+          key: ${{ steps.key.outputs.key }}
 
-      # The osbuild store can outgrow the free space on /, so keep it on the /mnt disk.
+      # The osbuild store and airgap.sh's downloads can outgrow the free space on /, so keep them on the /mnt disk.
       - if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          sudo mkdir -p /mnt/image-builder /var/cache/image-builder
+          sudo mkdir -p /mnt/image-builder /var/cache/image-builder /mnt/agent-images /srv/rocky-cluster/images/agent-images
+          sudo chown "$USER" /mnt/agent-images
           sudo mount --bind /mnt/image-builder /var/cache/image-builder
+          sudo mount --bind /mnt/agent-images /srv/rocky-cluster/images/agent-images
 
-      # The runner has no image cache for airgap.sh, so CI builds the image that pulls at first boot.
       - if: steps.cache.outputs.cache-hit != 'true'
-        run: image/build.sh
-        env:
-          SKIP_AIRGAP: 1
+        run: |
+          image/build.sh
+          df -h / /mnt
+
+      # osbuild compresses the qcow2 by default, so zip compression would only cost time.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rocky-rke2
+          path: image/output/rocky-rke2.qcow2
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  # Reports a rebuilt image's cache entry size. On master it deletes the entries the new one supersedes.
+  # A separate job, so the job that runs the image build never holds actions: write.
+  image-cache:
+    needs: image
+    if: needs.image.outputs.built == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      KEY: ${{ needs.image.outputs.key }}
+    steps:
+      - run: |
+          gh cache list --key "$KEY" --json key,ref,sizeInBytes \
+            --jq '"| key | ref | bytes |\n|---|---|---|", (.[] | "| \(.key) | \(.ref) | \(.sizeInBytes) |")' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - if: github.ref == 'refs/heads/master'
+        run: |
+          gh cache list --ref refs/heads/master --key rocky-rke2- --limit 100 --json id,key \
+            --jq ".[] | select(.key != \"$KEY\") | .id" | xargs -r -n1 gh cache delete
 
   # One job per justfile recipe, so the checks run in parallel with the image build.
   check:
@@ -69,11 +111,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/cache/restore@v6
+      - uses: actions/download-artifact@v8
         with:
-          path: image/output/
-          key: rocky-rke2-${{ hashFiles('image/*') }}
-          fail-on-cache-miss: true
+          name: rocky-rke2
+          path: image/output
 
       - uses: opentofu/setup-opentofu@v2
         with:
