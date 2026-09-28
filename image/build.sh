@@ -22,6 +22,8 @@ if [[ -z ${SKIP_AIRGAP:-} ]]; then
   airgap_repo=(--extra-repo file:///airgap-repo)
 fi
 sudo mkdir -p "$store"
+# A previous archived build left a symlink here. Remove it so image-builder writes a fresh file, not through the link.
+[[ -L output/rocky-rke2.qcow2 ]] && rm output/rocky-rke2.qcow2
 sudo podman run --rm --privileged -v "$PWD/$blueprint":/blueprint.toml:ro "${airgap_mount[@]}" \
   -v "$PWD/rocky-10.2.json":/repos/rocky-10.2.json:ro -v "$PWD/output":/output -v "$store":"$store" "$img" \
   --force-repo-dir /repos "${airgap_repo[@]}" build qcow2 --distro rocky-10.2 --blueprint /blueprint.toml \
@@ -31,4 +33,13 @@ sudo chown -R "$(id -u):$(id -g)" output
 if grep -q 'scriptlet failed' output/build.log; then
   echo "a %post scriptlet failed, see output/build.log; output/rocky-rke2.qcow2 is incomplete" >&2
   exit 1
+fi
+# CLUSTER_IMAGE_ARCHIVE moves the finished image out of the checkout and leaves a symlink for tofu.sh.
+if [[ -n ${CLUSTER_IMAGE_ARCHIVE:-} ]]; then
+  dest=$CLUSTER_IMAGE_ARCHIVE/$(date -u +%Y%m%dT%H%M%SZ)
+  mkdir -p "$dest"
+  mv output/rocky-rke2.qcow2 "$dest"/
+  cp output/build.log "$dest"/
+  ln -s "$dest/rocky-rke2.qcow2" output/rocky-rke2.qcow2
+  echo "archived to $dest"
 fi
