@@ -17,12 +17,16 @@ class ConfigYaml(unittest.TestCase):
 
     def test_joining_server_and_agent_join_through_the_vip(self):
         for role in ("server", "agent"):
-            self.assertIn("server: https://192.168.150.10:9345\n", config_yaml(ENV, role, False))
+            self.assertIn(
+                "server: https://192.168.150.10:9345\n", config_yaml(ENV, role, False)
+            )
 
     def test_only_servers_get_tls_san_and_etcd_args(self):
         server = config_yaml(ENV, "server", False)
         self.assertIn("tls-san:\n  - 192.168.150.11\n  - 192.168.150.10\n", server)
-        self.assertIn("etcd-arg:\n  - heartbeat-interval=500\n  - election-timeout=5000\n", server)
+        self.assertIn(
+            "etcd-arg:\n  - heartbeat-interval=500\n  - election-timeout=5000\n", server
+        )
         agent = config_yaml(ENV, "agent", False)
         self.assertNotIn("tls-san", agent)
         self.assertNotIn("etcd-arg", agent)
@@ -32,7 +36,7 @@ class ConfigYaml(unittest.TestCase):
         token = """a"b'c: d\\e\\"f"""
         line = config_yaml({**ENV, "RKE2_TOKEN": token}, "agent", False).splitlines()[0]
         self.assertTrue(line.startswith("token: "))
-        self.assertEqual(json.loads(line[len("token: "):]), token)
+        self.assertEqual(json.loads(line[len("token: ") :]), token)
 
 
 class KeepalivedConf(unittest.TestCase):
@@ -62,14 +66,23 @@ class Main(unittest.TestCase):
         self.vip_up = mock.Mock(return_value=True)
         self.write = mock.Mock(side_effect=rke2_elect.write)
         self.run_ = mock.Mock()
-        for name, value in (("STATE", self.state), ("CONFIG", self.config), ("KEEPALIVED", self.keepalived),
-                            ("vip_up", self.vip_up), ("write", self.write)):
+        for name, value in (
+            ("STATE", self.state),
+            ("CONFIG", self.config),
+            ("KEEPALIVED", self.keepalived),
+            ("vip_up", self.vip_up),
+            ("write", self.write),
+        ):
             p = mock.patch.object(rke2_configure, name, value)
             p.start()
             self.addCleanup(p.stop)
-        for p in (mock.patch.object(rke2_configure.subprocess, "run", self.run_),
-                  mock.patch.object(rke2_configure.time, "sleep"),
-                  mock.patch.dict(os.environ, {**ENV, "VIP": "192.168.150.10/24", "NODE_IFACE": "eth1"})):
+        for p in (
+            mock.patch.object(rke2_configure.subprocess, "run", self.run_),
+            mock.patch.object(rke2_configure.time, "sleep"),
+            mock.patch.dict(
+                os.environ, {**ENV, "VIP": "192.168.150.10/24", "NODE_IFACE": "eth1"}
+            ),
+        ):
             p.start()
             self.addCleanup(p.stop)
 
@@ -80,7 +93,9 @@ class Main(unittest.TestCase):
         rke2_configure.main()
 
     def assert_started(self, role):
-        self.run_.assert_called_once_with(["systemctl", "enable", "--now", "--no-block", *units(role)], check=True)
+        self.run_.assert_called_once_with(
+            ["systemctl", "enable", "--now", "--no-block", *units(role)], check=True
+        )
 
     def test_no_role_exits_nonzero_and_writes_nothing(self):
         for state in (None, {}):
@@ -95,7 +110,9 @@ class Main(unittest.TestCase):
         answers = iter([False, False, True])
 
         def vip_up(vip):
-            self.assertFalse(os.path.exists(self.config) or os.path.exists(self.keepalived))
+            self.assertFalse(
+                os.path.exists(self.config) or os.path.exists(self.keepalived)
+            )
             return next(answers)
 
         self.vip_up.side_effect = vip_up
@@ -110,7 +127,10 @@ class Main(unittest.TestCase):
 
     def test_server_writes_keepalived_before_config(self):
         self.main({"role": "server", "bootstrap": False})
-        self.assertEqual([c.args[0] for c in self.write.call_args_list], [self.keepalived, self.config])
+        self.assertEqual(
+            [c.args[0] for c in self.write.call_args_list],
+            [self.keepalived, self.config],
+        )
         with open(self.keepalived) as f:
             self.assertEqual(f.read(), keepalived_conf("192.168.150.10", "eth1"))
         self.assert_started("server")
