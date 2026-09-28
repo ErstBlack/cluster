@@ -28,21 +28,19 @@ NODE_ENV = "/run/rke2/node.env"
 MACHINE_ID = "/etc/machine-id"
 PROFILE = "cluster"
 SIOCGIFADDR = 0x8915
-SIOCGIFNETMASK = 0x891B
 
 
 def addrs():
-    """(ifname, ip, netmask) for every interface with an IPv4 address."""
+    """(ifname, ip) for every interface with an IPv4 address."""
     found = []
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         for _, name in socket.if_nameindex():
             req = struct.pack("256s", name.encode())
             try:
                 ip = fcntl.ioctl(s.fileno(), SIOCGIFADDR, req)[20:24]
-                mask = fcntl.ioctl(s.fileno(), SIOCGIFNETMASK, req)[20:24]
             except OSError:  # no IPv4 address
                 continue
-            found.append((name, socket.inet_ntoa(ip), socket.inet_ntoa(mask)))
+            found.append((name, socket.inet_ntoa(ip)))
     return found
 
 
@@ -50,7 +48,7 @@ def pick(vip, addrs):
     """(ifname, ip) of the first address inside the network of vip (a.b.c.d/NN). The VIP itself is
     skipped, since keepalived may already hold it."""
     vip = ipaddress.ip_interface(vip)
-    for name, ip, _ in addrs:
+    for name, ip in addrs:
         addr = ipaddress.ip_address(ip)
         if addr != vip.ip and addr in vip.network:
             return name, ip
