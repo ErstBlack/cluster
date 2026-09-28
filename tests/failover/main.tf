@@ -25,7 +25,8 @@ resource "terraform_data" "failover" {
         [ "$SECONDS" -lt 120 ] || { echo "VIP did not move off $old within 120 s" >&2; exit 1; }
         sleep 2
       done
-      echo "VIP moved from $old to $new in $${SECONDS}s"
+      # tofu test hides provisioner output on success, so CI also gets the time in the job summary.
+      echo "VIP moved from $old to $new in $${SECONDS}s" | tee -a "$${GITHUB_STEP_SUMMARY:-/dev/null}"
     EOT
   }
 }
