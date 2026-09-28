@@ -8,30 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  image:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-
-      - id: cache
-        uses: actions/cache@v6
-        with:
-          path: image/output/
-          key: rocky-rke2-${{ hashFiles('image/*') }}
-
-      # The osbuild store can outgrow the free space on /, so keep it on the /mnt disk.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          sudo mkdir -p /mnt/image-builder /var/cache/image-builder
-          sudo mount --bind /mnt/image-builder /var/cache/image-builder
-
-      # The runner has no image cache for airgap.sh, so CI builds the image that pulls at first boot.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: image/build.sh
-        env:
-          SKIP_AIRGAP: 1
-
-  # One job per justfile recipe, so the checks run in parallel with the image build.
+  # One job per justfile recipe, so the checks run in parallel.
   check:
     runs-on: ubuntu-24.04
     strategy:
@@ -63,17 +40,41 @@ jobs:
       - run: just ${{ matrix.check }}
 
   test:
-    needs: [image, check]
+    needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      # Only a save that ran and succeeded counts, so a job that failed before the build never triggers a prune.
+      built: ${{ steps.save.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/cache/restore@v6
+      # hashFiles is not available in job outputs, so a step records the key.
+      - id: key
+        run: echo "key=rocky-rke2-airgap-${{ hashFiles('image/*') }}" >> "$GITHUB_OUTPUT"
+
+      # The image is restored and, on a miss, built in the job that uses it. A pruned or evicted entry then costs a
+      # rebuild, never a failed run. The airgap- prefix keeps pre-airgap entries from being restored.
+      - id: cache
+        uses: actions/cache/restore@v6
         with:
-          path: image/output/
-          key: rocky-rke2-${{ hashFiles('image/*') }}
-          fail-on-cache-miss: true
+          path: image/output/rocky-rke2.qcow2
+          key: ${{ steps.key.outputs.key }}
+
+      # airgap.sh fetches into a fixed path under /srv, which the runner user cannot create.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo install -d -o "$USER" /srv/rocky-cluster/images/agent-images
+          image/build.sh
+
+      # Saved before the test, so a failed test does not cost the next run a rebuild.
+      - id: save
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: image/output/rocky-rke2.qcow2
+          key: ${{ steps.key.outputs.key }}
 
       - uses: opentofu/setup-opentofu@v2
         with:
@@ -109,3 +110,27 @@ jobs:
       - run: just tofu test
         env:
           TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
+
+  # Reports a rebuilt image's cache entry size. On master it deletes the entries the new one supersedes.
+  # A separate job, so the job that runs the image build never holds actions: write.
+  image-cache:
+    needs: test
+    if: ${{ !cancelled() && needs.test.outputs.built == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      KEY: ${{ needs.test.outputs.key }}
+    steps:
+      - run: |
+          gh cache list --key "$KEY" --json key,ref,sizeInBytes \
+            --jq '"| key | ref | bytes |\n|---|---|---|", (.[] | "| \(.key) | \(.ref) | \(.sizeInBytes) |")' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - if: github.ref == 'refs/heads/master'
+        run: |
+          : "${KEY:?an empty key would select every entry}"
+          gh cache list --ref refs/heads/master --key rocky-rke2- --limit 100 --json id,key \
+            --jq ".[] | select(.key != \"$KEY\") | .id" | xargs -r -n1 gh cache delete
