@@ -134,3 +134,91 @@ jobs:
           : "${KEY:?an empty key would select every entry}"
           gh cache list --ref refs/heads/master --key rocky-rke2- --limit 100 --json id,key \
             --jq ".[] | select(.key != \"$KEY\") | .id" | xargs -r -n1 gh cache delete
+
+  # "Re-run failed jobs" reuses this job's output, whose user cleanup already removed. Only "Re-run all jobs" works.
+  tailnet:
+    runs-on: ubuntu-24.04
+    environment: headscale
+    outputs:
+      bundle: ${{ steps.setup.outputs.bundle }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The bundle is ciphertext only. GitHub drops a job output that contains a masked value.
+      - id: setup
+        run: |
+          bundle=$(ci/headscale.sh setup "ci-${{ github.run_id }}-${{ github.run_attempt }}")
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+        env:
+          HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+          HEADSCALE_API_KEY: ${{ secrets.HEADSCALE_API_KEY }}
+          CI_PASSPHRASE: ${{ secrets.CI_PASSPHRASE }}
+
+  # Two runners join the run's user and must see each other and nothing else. #53 replaces this with the test matrix.
+  tailnet-probe:
+    needs: tailnet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        slot: [1, 2]
+    steps:
+      # Installed before the bundle is decrypted, so the third-party script never sees the secrets in the environment.
+      - run: curl --fail --silent --show-error --location https://tailscale.com/install.sh | sh
+
+      # The bundle shows in this step's env in a public log, so CI_PASSPHRASE must be random, e.g. openssl rand -base64 32.
+      # Sets HEADSCALE_URL, TS_AUTHKEY and RKE2_TOKEN for later steps, each masked before it reaches GITHUB_ENV.
+      - name: Decrypt the bundle
+        run: |
+          bundle=$(openssl enc -d -aes-256-cbc -pbkdf2 -a -A -pass env:CI_PASSPHRASE <<<"$BUNDLE")
+          while IFS='=' read -r name value; do
+            echo "::add-mask::$value"
+            if [[ $name == HEADSCALE_URL ]]; then
+              host=${value#*://}
+              echo "::add-mask::${host%%[/:]*}"
+            fi
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done <<<"$bundle"
+        env:
+          BUNDLE: ${{ needs.tailnet.outputs.bundle }}
+          CI_PASSPHRASE: ${{ secrets.CI_PASSPHRASE }}
+
+      # No --advertise-tags: a tagged node falls outside the server's autogroup:self grant.
+      - run: >-
+          sudo tailscale up --login-server "$HEADSCALE_URL" --auth-key "$TS_AUTHKEY"
+          --hostname "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot }}"
+
+      # Pass once the peer list is exactly the other probe of this run, then hold so that probe sees this one too.
+      # Wait up to 10 minutes, since the other slot can queue behind the account's job limit.
+      - name: Check peers
+        run: |
+          for i in $(seq 120); do
+            tailscale status --json | jq --exit-status --arg prefix "$PREFIX" \
+              '[.Peer // {} | .[]] | length == 1 and all(.HostName | startswith($prefix))' >/dev/null && break
+            if ((i == 120)); then
+              tailscale status
+              exit 1
+            fi
+            sleep 5
+          done
+          sleep 30
+        env:
+          PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}-
+
+      # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
+      - if: always()
+        run: sudo tailscale logout
+
+  # The user name comes from the run, not from tailnet's output, so a tailnet job that failed midway is cleaned up too.
+  cleanup:
+    needs: [tailnet, tailnet-probe]
+    if: always()
+    runs-on: ubuntu-24.04
+    environment: headscale
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: ci/headscale.sh cleanup "ci-${{ github.run_id }}-${{ github.run_attempt }}"
+        env:
+          HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+          HEADSCALE_API_KEY: ${{ secrets.HEADSCALE_API_KEY }}
