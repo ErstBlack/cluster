@@ -8,7 +8,7 @@ users:
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     shell: /bin/bash
     ssh_authorized_keys: ${jsonencode(ssh_keys)}
-# Needs the image/ golden image: it carries rke2-server, rke2-agent, keepalived, qemu-guest-agent and the HelmCharts.
+# Needs the image/ golden image: it carries rke2-server, rke2-agent, keepalived and qemu-guest-agent.
 # At boot node-addr finds this node's address, rke2-elect picks its role, and rke2-configure writes
 # /etc/rancher/rke2/config.yaml and starts RKE2 (see the scripts).
 write_files:
@@ -27,7 +27,6 @@ write_files:
       RKE2_TOKEN=${token}
       VIP=${vip}
       CONTROL_PLANE_COUNT=${control_plane_count}
-      RANCHER_HOSTNAME=${rancher_hostname}
   # Writes NODE_IP and NODE_IFACE. Waits until the node has an address on the VIP's subnet.
   - path: /etc/systemd/system/node-addr.service
     content: |
@@ -93,17 +92,6 @@ write_files:
     content: |
       #!/bin/sh
       exec curl -sfk --max-time 2 -o /dev/null https://127.0.0.1:9345/ping
-  # Overrides the values of the image's rancher HelmChart.
-  - path: /var/lib/rancher/rke2/server/manifests/rancher-config.yaml
-    content: |
-      apiVersion: helm.cattle.io/v1
-      kind: HelmChartConfig
-      metadata:
-        name: rancher
-        namespace: kube-system
-      spec:
-        valuesContent: |-
-          hostname: ${rancher_hostname}
 runcmd:
   - [sh, -c, 'hostnamectl set-hostname "node-$(head -c 10 /etc/machine-id)"']
   # If write_files created the directory, it carries its parent's label. This applies the policy label.

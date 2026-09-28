@@ -8,8 +8,8 @@ so far. It is still in development and likely to change.
 
 ## Parts meet at contracts, not code layers
 
-The third-party parts (the image builder, RKE2, keepalived, Rancher, cert-manager, the tofu
-harness) will change while this is in development. Keep each one replaceable without a redesign.
+The third-party parts (the image builder, RKE2, keepalived, the tofu harness) will change while this
+is in development. Keep each one replaceable without a redesign.
 Parts talk through plain data: a file, env vars, a port, a qcow2. `/etc/rancher/rke2/elect.env`
 between cloud-init and `rke2_elect.py` is one such contract. Keep a part's decisions separate from
 the tool-specific calls that act on them. For example, the election's result (role, bootstrap)
