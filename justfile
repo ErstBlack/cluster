@@ -33,8 +33,9 @@ image:
 tofu *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    # The provider writes the cloud-init ISOs, which hold the join token, world-readable under TMPDIR. Keep them in
-    # the 0700 state directory. CI's runner is single-use.
+    # The provider writes the cloud-init ISOs, which hold the join token, under TMPDIR with 0644. umask keeps them
+    # owner-only. On a workstation they also stay in the state directory, so their path in state does not change.
+    umask 077
     if [[ -z ${CI:-} ]]; then
       [[ -d /srv/rocky-cluster ]] || { echo "missing /srv/rocky-cluster, see README" >&2; exit 1; }
       mkdir -p /srv/rocky-cluster/tmp
