@@ -6,6 +6,7 @@ shows up, so the unit's start job only ever succeeds and the units that require 
 
 ponytail: a node with two NICs on the VIP's subnet takes the first.
 """
+
 import fcntl
 import ipaddress
 import os
@@ -40,7 +41,9 @@ def pick(vip, addrs):
     keepalived may already hold it."""
     vip = ipaddress.ip_address(vip)
     for name, ip, mask in addrs:
-        if ipaddress.ip_address(ip) != vip and vip in ipaddress.ip_network(f"{ip}/{mask}", strict=False):
+        if ipaddress.ip_address(ip) != vip and vip in ipaddress.ip_network(
+            f"{ip}/{mask}", strict=False
+        ):
             return name, ip
     raise LookupError(f"no IPv4 address shares a subnet with the VIP {vip}")
 

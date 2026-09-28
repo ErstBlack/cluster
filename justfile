@@ -4,12 +4,31 @@ tofu := env("TOFU", "./tofu.sh")
 default:
     @just --list
 
-# Unit tests, tofu fmt and tofu validate
-check:
+# Every check CI runs before tofu test
+check: unit tofu-check shellcheck ruff actionlint hadolint
+
+# Python unit tests
+unit:
     python3 -m unittest discover -s cloud-init
+
+# tofu fmt and tofu validate
+tofu-check:
     {{tofu}} fmt -check -recursive
     {{tofu}} init -backend=false
     {{tofu}} validate
+
+shellcheck:
+    git ls-files -z '*.sh' | xargs -0 shellcheck
+
+ruff:
+    git ls-files -z '*.py' | xargs -0 uvx ruff check
+    git ls-files -z '*.py' | xargs -0 uvx ruff format --check
+
+actionlint:
+    actionlint
+
+hadolint:
+    git ls-files -z '*Containerfile*' '*Dockerfile*' | xargs -0 hadolint
 
 # Build image/output/rocky-rke2.qcow2
 image:

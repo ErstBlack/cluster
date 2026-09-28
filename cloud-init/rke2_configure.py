@@ -5,6 +5,7 @@ On first boot a node that does not bootstrap waits for the VIP to answer, so it 
 CONFIG is written last. On every boot the role's units are enabled and started, so a failed start or a
 power loss after CONFIG is written is repaired on the next run.
 """
+
 import json
 import os
 import subprocess
@@ -56,7 +57,11 @@ def config_yaml(env, role, bootstrap):
         lines += [f"  - {h}" for h in (env["NODE_IP"], env["VIP"])]
         # 5x etcd's defaults (100 ms, 1000 ms): a disk stall of a few seconds does not cost the leader.
         # ponytail: tuned on shared consumer SSDs; revisit on dedicated disks, where it slows failover.
-        lines += ["etcd-arg:", "  - heartbeat-interval=500", "  - election-timeout=5000"]
+        lines += [
+            "etcd-arg:",
+            "  - heartbeat-interval=500",
+            "  - election-timeout=5000",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -83,7 +88,9 @@ def main():
         # Written last: its presence means the config is complete.
         write(CONFIG, config_yaml(env, role, bootstrap), 0o600)
     # --no-block: rke2 blocks until it is ready.
-    subprocess.run(["systemctl", "enable", "--now", "--no-block", *units(role)], check=True)
+    subprocess.run(
+        ["systemctl", "enable", "--now", "--no-block", *units(role)], check=True
+    )
     print(f"started {role}{' (bootstrap)' if bootstrap else ''}", flush=True)
 
 
