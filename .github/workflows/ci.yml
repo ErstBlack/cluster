@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [unit, tofu-check, shellcheck, ruff, actionlint]
+        check: [unit, tofu-check, cloud-init-schema, shellcheck, ruff, actionlint]
         include:
           - check: actionlint
             install: |
@@ -48,7 +48,7 @@ jobs:
 
       - uses: extractions/setup-just@v4
 
-      - if: matrix.check == 'tofu-check'
+      - if: matrix.check == 'tofu-check' || matrix.check == 'cloud-init-schema'
         uses: opentofu/setup-opentofu@v2
         with:
           tofu_wrapper: false
