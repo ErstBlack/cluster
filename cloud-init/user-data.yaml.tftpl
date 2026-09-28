@@ -1,5 +1,5 @@
 #cloud-config
-# The same for every node. Each node sets its own hostname and finds its own address at boot.
+# The same for every node. Each node sets its own hostname and assigns its own address at boot.
 # Keeps cloud-init from resetting the hostname runcmd sets.
 preserve_hostname: true
 users:
@@ -9,7 +9,7 @@ users:
     shell: /bin/bash
     ssh_authorized_keys: ${jsonencode(ssh_keys)}
 # Needs the image/ golden image: it carries rke2-server, rke2-agent, keepalived and qemu-guest-agent.
-# At boot node-addr finds this node's address, rke2-elect picks its role, and rke2-configure writes
+# At boot node-addr assigns this node's address, rke2-elect picks its role, and rke2-configure writes
 # /etc/rancher/rke2/config.yaml and starts RKE2 (see the scripts).
 write_files:
   - path: /usr/local/sbin/node_addr.py
@@ -21,17 +21,21 @@ write_files:
   - path: /usr/local/sbin/rke2_configure.py
     permissions: "0755"
     content: ${jsonencode(configure_py)}
+  # VIP carries the site prefix (a.b.c.d/NN). GATEWAY and DNS may be empty.
   - path: /etc/rancher/rke2/elect.env
     permissions: "0600"
     content: |
       RKE2_TOKEN=${token}
       VIP=${vip}
+      GATEWAY=${gateway}
+      DNS=${dns}
       CONTROL_PLANE_COUNT=${control_plane_count}
-  # Writes NODE_IP and NODE_IFACE. Waits until the node has an address on the VIP's subnet.
+  # Writes NODE_IP and NODE_IFACE once the node has an address in the VIP's network, assigning one
+  # through NetworkManager if it has none.
   - path: /etc/systemd/system/node-addr.service
     content: |
       [Unit]
-      Description=Find this node's address on the VIP's subnet
+      Description=Assign this node's address in the VIP's network
       Wants=network-online.target
       After=network-online.target
 
