@@ -37,18 +37,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [unit, tofu-check, shellcheck, ruff, actionlint, hadolint]
+        check: [unit, tofu-check, shellcheck, ruff, actionlint]
         include:
           - check: actionlint
             install: |
               bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
               sudo mv actionlint /usr/local/bin/
-          - check: hadolint
-            install: |
-              sudo curl -fsSLo /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-x86_64
-              sudo chmod +x /usr/local/bin/hadolint
-    env:
-      TOFU: tofu
     steps:
       - uses: actions/checkout@v7
 
@@ -72,8 +66,6 @@ jobs:
     needs: [image, check]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    env:
-      TOFU: tofu
     steps:
       - uses: actions/checkout@v7
 

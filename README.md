@@ -5,7 +5,7 @@ through cloud-init and `cloud-init/rke2_elect.py`. Real deployments are independ
 virtual nodes, each started on its own with no orchestrator.
 
 The OpenTofu project here is the test harness. It runs nine VMs, `Rocky-Cluster-1` to
-`Rocky-Cluster-9`, on the KVM host `vcows`. Tofu runs in a podman container and reaches libvirt at `qemu+sshcmd://vcows/system`
+`Rocky-Cluster-9`, on the KVM host `vcows`. Host `tofu` reaches libvirt at `qemu+sshcmd://vcows/system`
 through the `vcows` entry in `~/.ssh/config`.
 
 | VM | MAC |
@@ -24,7 +24,6 @@ console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-clu
 ```sh
 just check
 just image
-just container
 just tofu init
 just tofu plan
 just tofu apply
@@ -32,7 +31,7 @@ just tofu output
 just tofu destroy
 ```
 
-`tofu.sh` mounts this directory at `/work` and `~/.ssh` read-only. The cloud-init user `rocky` gets
+`just tofu` runs the host's `tofu`, which must be 1.12 or later. The cloud-init user `rocky` gets
 every `~/.ssh/*.pub` plus every line of `~/.ssh/authorized_keys`, read at plan time. Keys reach a VM
 only at its first boot. A later key change replaces the seed volumes but does not add or revoke keys
 on existing VMs.
@@ -61,7 +60,7 @@ Consoles are in Cockpit on vcows under Virtual Machines, or `virsh -c qemu:///sy
 rebuilds every VM from scratch: overlays and domains are destroyed and re-created, and guest data is lost.
 
 ```sh
-./tofu.sh apply -var base_image_url=https://example/rocky10-custom.qcow2
+just tofu apply -var base_image_url=https://example/rocky10-custom.qcow2
 ```
 
 ## RKE2 golden image
@@ -93,7 +92,7 @@ the RKE2 join token. Once 60 s pass with no node appearing or dropping out (sile
 `control_plane_count` (default 3) highest tokens become servers and the highest
 bootstraps the cluster. If the elected bootstrap dies before it
 starts RKE2, including within about 10 s before the decision, the others wait on the VIP forever.
-Recover with `./tofu.sh destroy` and `./tofu.sh apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
+Recover with `just tofu destroy` and `just tofu apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
 VIP and joins as an agent. The servers run keepalived, which holds the VIP `192.168.150.10` on a server
 whose RKE2 supervisor answers. Nodes join through `https://192.168.150.10:9345`. After a reboot the node
 keeps its role. The cloud-init needs this image. The GenericCloud default has no RKE2.
@@ -110,9 +109,9 @@ in the manifest. `SKIP_AIRGAP=1 image/build.sh` builds without the package and n
 CI does that. The host needs `curl`. `rpmbuild` and `createrepo_c` run in a Rocky 10 container.
 With `CLUSTER_IMAGE_ARCHIVE` set, `image/build.sh` moves the finished image to
 `$CLUSTER_IMAGE_ARCHIVE/<UTC timestamp>/`, copies `build.log` there, and leaves `image/output/rocky-rke2.qcow2`
-as a symlink to it. `./tofu.sh` mounts that directory so the path below still resolves.
+as a symlink to it.
 
 ```sh
 image/build.sh
-./tofu.sh apply -var base_image_url=/work/image/output/rocky-rke2.qcow2
+just tofu apply -var base_image_url="$PWD/image/output/rocky-rke2.qcow2"
 ```
