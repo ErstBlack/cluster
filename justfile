@@ -31,7 +31,10 @@ cloud-init-schema:
     cd "$(mktemp -d)"
     echo "base64encode(templatefile(\"$dir/user-data.yaml.tftpl\", {ssh_keys = [\"ssh-ed25519 AAAA sample\"], token = \"sample\", vip = \"192.0.2.10/24\", gateway = \"192.0.2.1\", dns = \"192.0.2.1\", control_plane_count = 3, addr_py = file(\"$dir/node_addr.py\"), elect_py = file(\"$dir/rke2_elect.py\"), configure_py = file(\"$dir/rke2_configure.py\")}))" \
       | tofu console | tr -d '"' | base64 -d \
-      | podman run --rm -i "$image" sh -c 'cat > /tmp/user-data && cloud-init schema --config-file /tmp/user-data'
+      | podman run --rm -i "$image" sh -ec 'cat > /tmp/user-data
+          # cloud-init schema exits 0 on an empty document.
+          [ -s /tmp/user-data ] || { echo "Error: rendered user-data is empty" >&2; exit 1; }
+          cloud-init schema --config-file /tmp/user-data'
 
 shellcheck:
     git ls-files -z '*.sh' | xargs -0 shellcheck
