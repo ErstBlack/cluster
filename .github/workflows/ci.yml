@@ -188,22 +188,33 @@ jobs:
           sudo tailscale up --login-server "$HEADSCALE_URL" --auth-key "$TS_AUTHKEY"
           --hostname "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot }}"
 
-      # Pass once the peer list is exactly the other probe of this run, then hold so that probe sees this one too.
-      # Wait up to 10 minutes, since the other slot can queue behind the account's job limit.
+      # Fail at once on any peer from outside this run. Pass after holding for about 30 s once the other probe of this
+      # run appears, so that probe sees this one too. Wait up to 10 minutes, since the other slot can queue behind the
+      # account's job limit.
       - name: Check peers
         run: |
-          for i in $(seq 120); do
-            tailscale status --json | jq --exit-status --arg prefix "$PREFIX" \
-              '[.Peer // {} | .[]] | length == 1 and all(.HostName | startswith($prefix))' >/dev/null && break
-            if ((i == 120)); then
+          # A peer counts as this run's by its Headscale user, which the server assigns, not by its self-chosen hostname.
+          # Counts go through command substitution, so a jq or tailscale error stops the step instead of reading as none.
+          held=0
+          for _ in $(seq 120); do
+            status=$(tailscale status --json)
+            foreign=$(jq '.Self.UserID as $me | if $me == null then error("no Self.UserID") else . end
+              | [.Peer // {} | .[] | select(.UserID != $me)] | length' <<<"$status")
+            own=$(jq '.Peer // {} | length' <<<"$status")
+            if ((foreign)); then
+              echo "a peer from outside this run is visible"
               tailscale status
               exit 1
             fi
+            if ((held || own == 1)); then
+              if ((++held > 6)); then
+                exit 0
+              fi
+            fi
             sleep 5
           done
-          sleep 30
-        env:
-          PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}-
+          tailscale status
+          exit 1
 
       # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
       - if: always()
