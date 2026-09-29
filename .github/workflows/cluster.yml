@@ -164,6 +164,18 @@ jobs:
           sudo ci/overlay.sh reconcile </dev/null >"$RUNNER_TEMP/reconcile.log" 2>&1 &
           echo $! >"$RUNNER_TEMP/reconcile.pid"
 
+      # Samples the runner every 10 s until the job ends, so a job GitHub cancels leaves a record of the runner's state.
+      - run: |
+          while :; do
+            echo "$(date +%T) load $(cut -d' ' -f1-3 /proc/loadavg)" \
+              "memavail $(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)M" \
+              "vm $(virsh --connect qemu:///system domstate "Rocky-Cluster-$SLOT" 2>&1 | head -n 1)" \
+              "tailscale $(tailscale status --json 2>/dev/null | jq --raw-output .BackendState)"
+            sleep 10
+          done </dev/null >"$RUNNER_TEMP/health.log" 2>&1 &
+        env:
+          SLOT: ${{ matrix.slot }}
+
       - run: sudo ci/overlay.sh preflight ${{ matrix.slot }} ${{ inputs.nodes }}
 
       # The host's .1 in tofu/main.tf's network_cidr, so tests/ready reaches the VIP from this runner.
@@ -203,7 +215,7 @@ jobs:
         if: matrix.slot != 1
         run: |
           host=$RUN_NAME-1
-          errors=0
+          errors=0 polls=0
           while :; do
             if status=$(tailscale status --json) && here=$(jq --exit-status --arg host "$host" '
                 if .BackendState != "Running" then error("tailscale is \(.BackendState)")
@@ -220,6 +232,7 @@ jobs:
               cat "$RUNNER_TEMP/reconcile.log"
               exit 1
             fi
+            ((++polls % 6)) || echo "$(date +%T) $host is still on the tailnet"
             sleep 10
           done
 
@@ -233,6 +246,21 @@ jobs:
       # The log of work ci/case.sh started in the background, if any.
       - if: always()
         run: cat "$RUNNER_TEMP/case.log" 2>/dev/null || true
+
+      # Why the job ended: the last runner samples, any kernel OOM kill, and the runner's own log of cancellation and
+      # shutdown requests. The job log is public and the runner's log is not masked, so no text of it is printed: only
+      # each line's [time level component] and a fixed label. The runner logs "Force kill process on cancellation" for
+      # every step, so those lines are dropped.
+      - if: always()
+        run: |
+          tail -n 30 "$RUNNER_TEMP/health.log" 2>/dev/null || true
+          sudo dmesg | grep --ignore-case --extended-regexp 'out of memory|killed process' || true
+          sudo find /home/runner /opt -maxdepth 5 -path '*_diag*' -name 'Worker_*.log' 2>/dev/null |
+            xargs --no-run-if-empty sudo grep --no-filename --ignore-case --extended-regexp 'cancel|shutdown' |
+            grep --invert-match 'Force kill process on cancellation' |
+            awk 'match($0, /^\[[A-Za-z0-9 :.-]*\]/) {
+                print substr($0, RSTART, RLENGTH), (tolower($0) ~ /shutdown/ ? "shutdown" : "cancel") }' |
+            tail -n 20 || true
 
       # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
       - if: always()
