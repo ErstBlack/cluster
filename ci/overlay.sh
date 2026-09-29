@@ -18,7 +18,26 @@ vx="vx-cluster"
 verb=${1:-}
 reported=0
 
+# Shows where a frame stops: the VXLAN and tailnet counters, the FDB and neighbours, plain tailnet reachability of
+# each peer, and the host's packet filters.
+diagnose() {
+  local ip
+  set +e
+  ip -s link show "$vx"
+  ip -s link show tailscale0
+  bridge fdb show dev "$vx"
+  ip neigh show dev "$br"
+  for ip in $(fdb_peers); do
+    ping -c 2 -W 2 "$ip"
+    tailscale ping -c 2 "$ip"
+  done
+  tailscale debug netmap 2>&1 | jq -c '.PacketFilterRules // .PacketFilter' | head -c 4000
+  echo
+  nft list ruleset | head -120
+}
+
 fail() {
+  [[ $verb != preflight ]] || diagnose >&2
   echo "INFRASTRUCTURE: $*" >&2
   reported=1
   exit 1
@@ -141,11 +160,13 @@ preflight() {
     sleep 5
   done
   # An empty neighbour table makes the first ping to each peer resolve it by broadcast ARP. The first packets over a
-  # new Tailscale path can take seconds, hence the long reply timeout.
+  # new Tailscale path can take seconds, hence the long reply timeout. A peer in the FDB has already joined and takes
+  # its address seconds later, so 2 minutes is plenty.
   ip neigh flush dev "$br"
+  SECONDS=0
   for s in "${others[@]}"; do
     until ping -q -M "do" -s $((mtu - 28)) -c 1 -W 5 "198.18.0.$s" >/dev/null; do
-      ((SECONDS < 600)) || fail "slot $s does not answer a ${mtu}-byte don't-fragment ping"
+      ((SECONDS < 120)) || fail "slot $s does not answer a ${mtu}-byte don't-fragment ping"
       sleep 1
     done
     echo "slot $s answers at MTU $mtu"
