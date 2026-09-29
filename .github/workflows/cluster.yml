@@ -88,9 +88,15 @@ jobs:
       - uses: extractions/setup-just@v4
 
       # The slots that run tofu apply keep the backend's state under /srv, which the runner user cannot create.
+      # init fetches the providers from github.com, which failed once mid-nightly (run 36602051666), so it gets 3 tries.
       - run: |
           sudo install -d -o "$USER" /srv/rocky-cluster
-          just tofu init
+          for try in 1 2 3; do
+            just tofu init && exit 0
+            echo "tofu init failed (try $try of 3)"
+            sleep 15
+          done
+          exit 1
 
       # nftables counts the pings of ci/overlay.sh preflight.
       - name: Install libvirt
