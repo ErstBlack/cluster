@@ -67,7 +67,7 @@ fdb_peers() {
 }
 
 up() {
-  local vni ts_ip mtu
+  local vni ts_ip mtu mac a b c d
   # 24 bits: the run id's low 20 bits and the attempt's low 4. Only this run's peers are in the FDB, so the VNI only
   # keeps a stray packet from another run or attempt off this segment.
   vni=$(((${1:?} % 1048576) << 4 | ${2:?} % 16))
@@ -84,11 +84,16 @@ up() {
   # the tailnet, where Headscale shows each runner only its own user's peers, may reach it.
   nft -f - <<<'table inet overlay { chain input { type filter hook input priority 0; policy accept;
     iifname != "tailscale0" udp dport 4789 drop; }; }'
+  # Runners share one machine-id, from which udev derives a new link's MAC, so every runner's bridge had the same MAC
+  # and frames for a peer's bridge stayed local (run 36508310749). An explicit, locally administered MAC built from the
+  # Tailscale address is unique within the run, and udev leaves a MAC that was set explicitly alone.
+  IFS=. read -r a b c d <<<"$ts_ip"
+  mac=$(printf '02:%02x:%02x:%02x:%02x' "$a" "$b" "$c" "$d")
   # No learning, so the FDB holds only the entries the reconciler puts there. Unicast then floods to every peer.
-  ip link add "$vx" type vxlan id "$vni" local "$ts_ip" dstport 4789 nolearning
+  ip link add "$vx" address "$mac:02" type vxlan id "$vni" local "$ts_ip" dstport 4789 nolearning
   # No snooping, so multicast floods as on a plain switch. No IPv6 link-local addresses, so the host sends nothing
   # onto the segment by itself.
-  ip link add "$br" type bridge stp_state 0 mcast_snooping 0
+  ip link add "$br" address "$mac:01" type bridge stp_state 0 mcast_snooping 0
   ip link set "$vx" addrgenmode none
   ip link set "$br" addrgenmode none
   ip link set "$vx" master "$br" mtu "$mtu" up
