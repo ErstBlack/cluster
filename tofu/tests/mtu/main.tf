@@ -14,6 +14,9 @@ resource "terraform_data" "mtu" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
+      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
+      log() { printf '%(%H:%M:%S)T mtu: %s\n' -1 "$*"; }
+      log "checking the site NIC's MTU and a ${var.mtu}-byte ping to every peer, from ${var.vip}"
       vip_ssh() {
         timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR "rocky@${var.vip}" "$@"
@@ -40,6 +43,7 @@ resource "terraform_data" "mtu" {
       [ "$rc" -eq 0 ] || exit 1
       echo "site NIC $dev has MTU $mtu; ${var.mtu}-byte don't-fragment ping reached $peers peers" |
         tee -a "$${GITHUB_STEP_SUMMARY:-/dev/null}"
+      log passed
     EOT
   }
 }

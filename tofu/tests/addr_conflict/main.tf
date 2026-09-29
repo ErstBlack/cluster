@@ -10,6 +10,9 @@ resource "terraform_data" "addr_conflict" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
+      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
+      log() { printf '%(%H:%M:%S)T addr_conflict: %s\n' -1 "$*"; }
+      log "checking every node's InternalIP and node-addr journal, via ${var.vip}"
       node_ssh() {
         local host=$1
         shift
@@ -38,6 +41,7 @@ resource "terraform_data" "addr_conflict" {
       # tofu test hides provisioner output on success, so CI also gets the result in the job summary.
       echo "InternalIPs $ips all in $net.2 to $net.20; a failed nmcli up logged on$logged" |
         tee -a "$${GITHUB_STEP_SUMMARY:-/dev/null}"
+      log passed
     EOT
   }
 }

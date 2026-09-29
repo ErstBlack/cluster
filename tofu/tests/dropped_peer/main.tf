@@ -10,6 +10,9 @@ resource "terraform_data" "dropped_peer" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
+      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
+      log() { printf '%(%H:%M:%S)T dropped_peer: %s\n' -1 "$*"; }
+      log "searching every node's rke2-elect journal for a dropped silent peer, via ${var.vip}"
       node_ssh() {
         local host=$1
         shift
@@ -24,6 +27,7 @@ resource "terraform_data" "dropped_peer" {
         if [ -n "$line" ]; then
           # tofu test hides provisioner output on success, so CI also gets the result in the job summary.
           echo "$ip: $line" | tee -a "$${GITHUB_STEP_SUMMARY:-/dev/null}"
+          log passed
           exit 0
         fi
       done

@@ -166,8 +166,19 @@ jobs:
 
       - run: ci/case.sh pre "$CASE" ${{ matrix.slot }} ${{ inputs.nodes }}
 
+      # tofu test hides provisioner output, so the helpers under tofu/tests also write it to TEST_LOG, which tail shows
+      # live. The sleep lets tail print the last lines before it is stopped.
       - if: matrix.slot == 1
-        run: just tofu test "-filter=tests/$TEST.tftest.hcl"
+        run: |
+          export TEST_LOG=$RUNNER_TEMP/tofu-test.log
+          touch "$TEST_LOG"
+          tail -F -n +0 "$TEST_LOG" &
+          tail_pid=$!
+          rc=0
+          just tofu test "-filter=tests/$TEST.tftest.hcl" || rc=$?
+          sleep 1
+          kill "$tail_pid"
+          exit "$rc"
         env:
           TF_VAR_rke2_token: ${{ env.RKE2_TOKEN }}
           TEST: ${{ inputs.test }}

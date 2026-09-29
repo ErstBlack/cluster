@@ -9,6 +9,9 @@ resource "terraform_data" "reboot" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
+      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
+      log() { printf '%(%H:%M:%S)T reboot: %s\n' -1 "$*"; }
+      log "picking an agent and a server that does not hold ${var.vip}"
       node_ssh() {
         local host=$1
         shift
@@ -43,14 +46,20 @@ resource "terraform_data" "reboot" {
           *) echo "$node at $${ip[$node]} runs neither rke2 unit alone: '$${role[$node]}'" >&2; exit 1 ;;
         esac
         [ -n "$${boot[$node]}" ] || { echo "no boot ID from $node at $${ip[$node]}" >&2; exit 1; }
+        log "rebooting $node at $${ip[$node]}, running '$${role[$node]}' as rke2-server rke2-agent"
         node_ssh "$${ip[$node]}" 'sudo systemctl reboot' >/dev/null 2>&1 &
       done
       SECONDS=0
       for node in "$agent" "$server"; do
         # The kubelet reports the new boot ID once it is back, so a Ready from before the reboot never counts.
-        until now=$(node_ssh "$${ip[$node]}" cat /proc/sys/kernel/random/boot_id) && [ -n "$now" ] &&
-          [ "$now" != "$${boot[$node]}" ] && [ "$(info "$node")" = "$now True $${ip[$node]}" ] &&
-          [ "$(units "$${ip[$node]}")" = "$${role[$node]}" ]; do
+        until kube='' run=''; now=$(node_ssh "$${ip[$node]}" cat /proc/sys/kernel/random/boot_id) && [ -n "$now" ] &&
+          [ "$now" != "$${boot[$node]}" ] && kube=$(info "$node") && [ "$kube" = "$now True $${ip[$node]}" ] &&
+          run=$(units "$${ip[$node]}") && [ "$run" = "$${role[$node]}" ]; do
+          if [ -z "$now" ] || [ "$now" = "$${boot[$node]}" ]; then
+            log "$${SECONDS}s: $node not back at $${ip[$node]} with a new boot ID"
+          else
+            log "$${SECONDS}s: $node back with boot ID $now, kubelet reports '$kube', units '$run'"
+          fi
           [ "$SECONDS" -lt 900 ] || {
             echo "$node not back at $${ip[$node]} as '$${role[$node]}' and Ready within 15 min: $(info "$node"), $(units "$${ip[$node]}")" >&2
             exit 1
@@ -61,6 +70,7 @@ resource "terraform_data" "reboot" {
       # tofu test hides provisioner output on success, so CI also gets the result in the job summary.
       echo "rebooted agent $agent and server $server, back with the same IP and role in $${SECONDS}s" |
         tee -a "$${GITHUB_STEP_SUMMARY:-/dev/null}"
+      log passed
     EOT
   }
 }
