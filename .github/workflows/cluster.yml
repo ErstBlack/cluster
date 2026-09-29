@@ -248,13 +248,19 @@ jobs:
         run: cat "$RUNNER_TEMP/case.log" 2>/dev/null || true
 
       # Why the job ended: the last runner samples, any kernel OOM kill, and the runner's own log of cancellation and
-      # shutdown requests.
+      # shutdown requests. The job log is public and the runner's log is not masked, so only each line's
+      # [time level component] and the few lowercase words around the keyword are printed. The runner logs
+      # "Force kill process on cancellation" for every step, so those lines are dropped.
       - if: always()
         run: |
           tail -n 30 "$RUNNER_TEMP/health.log" 2>/dev/null || true
           sudo dmesg | grep --ignore-case --extended-regexp 'out of memory|killed process' || true
           sudo find /home/runner /opt -maxdepth 5 -path '*_diag*' -name 'Worker_*.log' 2>/dev/null |
             xargs --no-run-if-empty sudo grep --no-filename --ignore-case --extended-regexp 'cancel|shutdown' |
+            grep --invert-match 'Force kill process on cancellation' |
+            awk 'match($0, /^\[[^]]*\]/) { ts = substr($0, RSTART, RLENGTH) }
+              match($0, /[A-Za-z]*([Cc]ancel|[Ss]hutdown)[A-Za-z]*( [a-z]+)?( [a-z]+)?( [a-z]+)?/) {
+                print ts, substr($0, RSTART, RLENGTH) }' |
             tail -n 20 || true
 
       # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
