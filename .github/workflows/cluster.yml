@@ -164,14 +164,16 @@ jobs:
           sudo ci/overlay.sh reconcile </dev/null >"$RUNNER_TEMP/reconcile.log" 2>&1 &
           echo $! >"$RUNNER_TEMP/reconcile.pid"
 
-      # Samples the runner every 10 s until the job ends, so a job GitHub cancels leaves a record of the runner's state.
+      # Samples the runner every 30 s until the job ends, so a job GitHub cancels leaves a record of the runner's state.
+      # Slot 1's test step and the other slots' hold step also print the samples live, since a runner that GitHub shuts
+      # down never runs its always() steps (bootstrap-dies-3 in run 36639107201).
       - run: |
           while :; do
             echo "$(date +%T) load $(cut -d' ' -f1-3 /proc/loadavg)" \
               "memavail $(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)M" \
               "vm $(virsh --connect qemu:///system domstate "Rocky-Cluster-$SLOT" 2>&1 | head -n 1)" \
               "tailscale $(tailscale status --json 2>/dev/null | jq --raw-output .BackendState)"
-            sleep 10
+            sleep 30
           done </dev/null >"$RUNNER_TEMP/health.log" 2>&1 &
         env:
           SLOT: ${{ matrix.slot }}
@@ -185,12 +187,12 @@ jobs:
       - run: ci/case.sh pre "$CASE" ${{ matrix.slot }} ${{ inputs.nodes }}
 
       # tofu test hides provisioner output, so the helpers under tofu/tests also write it to TEST_LOG, which tail shows
-      # live. The sleep lets tail print the last lines before it is stopped.
+      # live along with the runner samples. The sleep lets tail print the last lines before it is stopped.
       - if: matrix.slot == 1
         run: |
           export TEST_LOG=$RUNNER_TEMP/tofu-test.log
           touch "$TEST_LOG"
-          tail -F -n +0 "$TEST_LOG" &
+          tail --quiet -F -n +0 "$TEST_LOG" "$RUNNER_TEMP/health.log" &
           tail_pid=$!
           rc=0
           just tofu test "-filter=tests/$TEST.tftest.hcl" || rc=$?
@@ -232,7 +234,7 @@ jobs:
               cat "$RUNNER_TEMP/reconcile.log"
               exit 1
             fi
-            ((++polls % 6)) || echo "$(date +%T) $host is still on the tailnet"
+            ((++polls % 6)) || echo "$(date +%T) $host is still on the tailnet. $(tail -n 1 "$RUNNER_TEMP/health.log")"
             sleep 10
           done
 
