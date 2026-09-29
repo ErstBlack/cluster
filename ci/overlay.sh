@@ -11,7 +11,7 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
-# The bridge name is the contract with main.tf's var.bridge.
+# The bridge name is the contract with tofu/main.tf's var.bridge.
 br="br-cluster"
 vx="vx-cluster"
 
