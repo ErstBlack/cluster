@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Give a CI run its own Headscale user and remove it afterwards, through the Headscale v0.29 REST API.
-#   setup <user>      create the user, mint its key and the RKE2 token, print them encrypted with CI_PASSPHRASE
+#   setup <user>      create the user, mint its key, the RKE2 token and an ssh key, print them encrypted with
+#                     CI_PASSPHRASE as HEADSCALE_URL, TS_AUTHKEY, RKE2_TOKEN and SSH_KEY lines
 #   cleanup <user>    expire the user's keys, delete its nodes, delete the user. A missing user is success.
 #   janitor <hours>   run cleanup on every ci-<run>-<attempt> user older than <hours>
 # Reads HEADSCALE_URL and HEADSCALE_API_KEY. Every secret is masked before anything can print it, and curl's errors
@@ -20,7 +21,7 @@ api() {
 }
 
 setup() {
-  local user=$1 id expiration key token
+  local user=$1 id expiration key token dir ssh_key
   : "${CI_PASSPHRASE:?}"
   id=$(api POST user --data "$(jq --null-input --arg name "$user" '{name: $name}')" |
     jq --exit-status --raw-output .user.id)
@@ -31,7 +32,13 @@ setup() {
   echo "::add-mask::$key" >&2
   token=$(openssl rand -hex 32)
   echo "::add-mask::$token" >&2
-  printf 'HEADSCALE_URL=%s\nTS_AUTHKEY=%s\nRKE2_TOKEN=%s\n' "$url" "$key" "$token" |
+  # Every runner of the run logs in to every node with this key. The private key travels base64 on one line.
+  dir=$(mktemp -d)
+  ssh-keygen -q -t ed25519 -N '' -C "$user" -f "$dir/id_ed25519"
+  ssh_key=$(base64 -w0 "$dir/id_ed25519")
+  rm -r "$dir"
+  echo "::add-mask::$ssh_key" >&2
+  printf 'HEADSCALE_URL=%s\nTS_AUTHKEY=%s\nRKE2_TOKEN=%s\nSSH_KEY=%s\n' "$url" "$key" "$token" "$ssh_key" |
     openssl enc -aes-256-cbc -pbkdf2 -a -A -pass env:CI_PASSPHRASE
   echo
 }

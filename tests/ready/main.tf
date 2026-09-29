@@ -1,12 +1,16 @@
-# Test helper: waits until the server holding var.vip has its generated hostname, sees var.servers control-plane
-# nodes, all nodes are Ready with no InternalIP shared by two nodes, and keepalived serves the RKE2 supervisor on
-# var.vip. The control-plane count proves all nodes became servers in one cluster.
+# Test helper: waits until the server holding var.vip has its generated hostname, sees var.nodes nodes of which
+# var.servers are control-plane nodes, all nodes are Ready with no InternalIP shared by two nodes, and keepalived
+# serves the RKE2 supervisor on var.vip. The counts prove every node joined one cluster in the role it was elected to.
 # A non-zero exit after 30 minutes fails the tofu test run.
 variable "vip" {
   type = string
 }
 
 variable "servers" {
+  type = number
+}
+
+variable "nodes" {
   type = number
 }
 
@@ -19,6 +23,7 @@ resource "terraform_data" "ready" {
           -o LogLevel=ERROR "rocky@${var.vip}" \
           'k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
            hostname | grep -qx "node-[0-9a-f]\{10\}" &&
+           [ "$($k get nodes -o name | wc -l)" -eq ${var.nodes} ] &&
            [ "$($k get nodes -l node-role.kubernetes.io/control-plane=true -o name | wc -l)" -eq ${var.servers} ] &&
            $k wait --for=condition=Ready node --all --timeout=5s &&
            ips=$($k get nodes -o jsonpath="{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}") &&

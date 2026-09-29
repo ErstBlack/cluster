@@ -23,6 +23,7 @@ run "cluster_ready" {
   variables {
     vip     = run.apply.vip
     servers = 3
+    nodes   = 3
   }
 }
 
