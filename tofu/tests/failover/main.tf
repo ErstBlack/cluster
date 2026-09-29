@@ -1,9 +1,15 @@
-# Test helper: crashes the server holding var.vip and waits until var.vip serves the RKE2 supervisor from a
-# different server. The forced poweroff skips keepalived's clean stop, so the backups take over on the VRRP
+# Test helper: runs var.action on the server holding var.vip and waits until var.vip serves the RKE2 supervisor from
+# a different server. The default forced poweroff skips keepalived's clean stop, so the backups take over on the VRRP
 # master-down timer, as they would after a real crash.
 # A non-zero exit after 120 seconds fails the tofu test run.
 variable "vip" {
   type = string
+}
+
+# A command for the holder's shell, with no single quote.
+variable "action" {
+  type    = string
+  default = "sudo systemctl poweroff --force --force"
 }
 
 resource "terraform_data" "failover" {
@@ -17,8 +23,8 @@ resource "terraform_data" "failover" {
       old=$(vip_ssh hostname)
       [ -n "$old" ] || { echo "no server answers ssh on ${var.vip}" >&2; exit 1; }
       # A crashed peer never closes the connection, so this ssh hangs until its timeout. Background it so the clock
-      # starts at the crash.
-      vip_ssh 'sudo systemctl poweroff --force --force' >/dev/null 2>&1 &
+      # starts at the action.
+      vip_ssh '${var.action}' >/dev/null 2>&1 &
       SECONDS=0
       until curl -sfk --max-time 5 -o /dev/null https://${var.vip}:9345/ping &&
         new=$(vip_ssh hostname) && [ -n "$new" ] && [ "$new" != "$old" ]; do
