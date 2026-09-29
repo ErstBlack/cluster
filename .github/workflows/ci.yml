@@ -193,16 +193,19 @@ jobs:
       # account's job limit.
       - name: Check peers
         run: |
+          # A peer counts as this run's by its Headscale user, which the server assigns, not by its self-chosen hostname.
+          # Counts go through command substitution, so a jq or tailscale error stops the step instead of reading as none.
           held=0
           for _ in $(seq 120); do
             status=$(tailscale status --json)
-            if jq --exit-status --arg prefix "$PREFIX" \
-              'any(.Peer // {} | .[]; .HostName | startswith($prefix) | not)' <<<"$status" >/dev/null; then
+            foreign=$(jq '.Self.UserID as $me | [.Peer // {} | .[] | select(.UserID != $me)] | length' <<<"$status")
+            own=$(jq '.Peer // {} | length' <<<"$status")
+            if ((foreign)); then
               echo "a peer from outside this run is visible"
               tailscale status
               exit 1
             fi
-            if ((held)) || jq --exit-status '.Peer // {} | length == 1' <<<"$status" >/dev/null; then
+            if ((held || own == 1)); then
               if ((++held > 6)); then
                 exit 0
               fi
@@ -211,8 +214,6 @@ jobs:
           done
           tailscale status
           exit 1
-        env:
-          PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}-
 
       # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
       - if: always()
