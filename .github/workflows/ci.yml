@@ -198,7 +198,8 @@ jobs:
           held=0
           for _ in $(seq 120); do
             status=$(tailscale status --json)
-            foreign=$(jq '.Self.UserID as $me | [.Peer // {} | .[] | select(.UserID != $me)] | length' <<<"$status")
+            foreign=$(jq '.Self.UserID as $me | if $me == null then error("no Self.UserID") else . end
+              | [.Peer // {} | .[] | select(.UserID != $me)] | length' <<<"$status")
             own=$(jq '.Peer // {} | length' <<<"$status")
             if ((foreign)); then
               echo "a peer from outside this run is visible"
