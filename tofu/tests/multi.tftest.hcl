@@ -27,6 +27,18 @@ run "cluster_ready" {
   }
 }
 
+# Before vip_failover, which powers off the VIP holder this check runs on.
+run "guest_mtu" {
+  module {
+    source = "./tests/mtu"
+  }
+
+  variables {
+    vip = run.apply.vip
+    mtu = var.mtu
+  }
+}
+
 run "vip_failover" {
   module {
     source = "./tests/failover"
