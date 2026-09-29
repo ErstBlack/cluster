@@ -141,7 +141,7 @@ jobs:
           virsh -c qemu:///system pool-build images
           virsh -c qemu:///system pool-start images
 
-      # main.tf selects Secure Boot firmware with Microsoft keys enrolled. Fail here if ovmf ships no such descriptor.
+      # tofu/main.tf selects Secure Boot firmware with Microsoft keys enrolled. Fail here if ovmf ships no such descriptor.
       - name: Check OVMF enrolled-keys descriptor
         run: grep -l '"enrolled-keys"' /usr/share/qemu/firmware/*.json
 
@@ -168,7 +168,7 @@ jobs:
           BUNDLE: ${{ needs.tailnet.outputs.bundle }}
           CI_PASSPHRASE: ${{ secrets.CI_PASSPHRASE }}
 
-      # main.tf puts every ~/.ssh/*.pub into cloud-init. Every slot installs the run's key, so slot 1 logs in to the
+      # tofu/main.tf puts every ~/.ssh/*.pub into cloud-init. Every slot installs the run's key, so slot 1 logs in to the
       # node holding the VIP on any runner.
       # A bundle short of a value fails here, not as a cluster that never forms.
       - run: |
@@ -198,7 +198,7 @@ jobs:
 
       - run: sudo ci/overlay.sh preflight ${{ matrix.slot }} ${{ strategy.job-total }}
 
-      # The host's .1 in main.tf's network_cidr, so tests/ready reaches the VIP from this runner.
+      # The host's .1 in tofu/main.tf's network_cidr, so tests/ready reaches the VIP from this runner.
       - if: matrix.slot == 1
         run: sudo ip address add 192.168.150.1/24 dev br-cluster
 
