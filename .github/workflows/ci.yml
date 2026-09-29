@@ -188,20 +188,29 @@ jobs:
           sudo tailscale up --login-server "$HEADSCALE_URL" --auth-key "$TS_AUTHKEY"
           --hostname "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot }}"
 
-      # Pass once the peer list is exactly the other probe of this run, then hold so that probe sees this one too.
-      # Wait up to 10 minutes, since the other slot can queue behind the account's job limit.
+      # Fail at once on any peer from outside this run. Pass after holding for about 30 s once the other probe of this
+      # run appears, so that probe sees this one too. Wait up to 10 minutes, since the other slot can queue behind the
+      # account's job limit.
       - name: Check peers
         run: |
-          for i in $(seq 120); do
-            tailscale status --json | jq --exit-status --arg prefix "$PREFIX" \
-              '[.Peer // {} | .[]] | length == 1 and all(.HostName | startswith($prefix))' >/dev/null && break
-            if ((i == 120)); then
+          held=0
+          for _ in $(seq 120); do
+            status=$(tailscale status --json)
+            if jq --exit-status --arg prefix "$PREFIX" \
+              'any(.Peer // {} | .[]; .HostName | startswith($prefix) | not)' <<<"$status" >/dev/null; then
+              echo "a peer from outside this run is visible"
               tailscale status
               exit 1
             fi
+            if ((held)) || jq --exit-status '.Peer // {} | length == 1' <<<"$status" >/dev/null; then
+              if ((++held > 6)); then
+                exit 0
+              fi
+            fi
             sleep 5
           done
-          sleep 30
+          tailscale status
+          exit 1
         env:
           PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}-
 
