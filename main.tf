@@ -41,7 +41,7 @@ locals {
 
   # The MAC :0N scheme allows nodes 1 to 9. Nodes assign their own addresses.
   nodes = {
-    for n in range(1, var.node_count + 1) : tostring(n) => {
+    for n in(var.slot == null ? range(1, var.node_count + 1) : [var.slot]) : tostring(n) => {
       name     = "Rocky-Cluster-${n}"
       hostname = "${local.prefix}-${n}"
       mac      = format("52:54:00:c1:00:%02x", n)
@@ -49,7 +49,7 @@ locals {
   }
 
   # Nodes elect their RKE2 roles at boot. keepalived floats the VIP over the servers, so joins never
-  # depend on one node. Nodes never assign the VIP or the host's .1 to themselves.
+  # depend on one node. Nodes never assign the VIP or the gateway to themselves.
   vip = cidrhost(local.network_cidr, 10)
 }
 
@@ -58,7 +58,10 @@ resource "random_password" "rke2_token" {
   special = false
 }
 
+# A bridge from var.bridge replaces this network.
 resource "libvirt_network" "cluster" {
+  count = var.bridge == null ? 1 : 0
+
   name      = local.prefix
   autostart = true
   forward   = { mode = "nat" }
@@ -102,15 +105,16 @@ resource "libvirt_volume" "disk" {
 }
 
 # One seed for every node. Each node sets its own hostname and assigns its own address at boot.
-# The host's .1 is the gateway and DNS, since nodes still pull images at first boot (#14).
+# On the libvirt network the host's .1 is the gateway and DNS. On a bridge there is neither, and nodes route
+# on-link. Nodes need nothing outside the cluster, since the image is airgapped (#60).
 resource "libvirt_cloudinit_disk" "seed" {
   name = "${local.prefix}-seed"
   user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
     ssh_keys            = local.ssh_keys
-    token               = random_password.rke2_token.result
+    token               = coalesce(var.rke2_token, random_password.rke2_token.result)
     vip                 = "${local.vip}/${split("/", local.network_cidr)[1]}"
-    gateway             = cidrhost(local.network_cidr, 1)
-    dns                 = cidrhost(local.network_cidr, 1)
+    gateway             = var.bridge == null ? cidrhost(local.network_cidr, 1) : ""
+    dns                 = var.bridge == null ? cidrhost(local.network_cidr, 1) : ""
     control_plane_count = var.control_plane_count
     addr_py             = file("${path.module}/cloud-init/node_addr.py")
     elect_py            = file("${path.module}/cloud-init/rke2_elect.py")
@@ -173,9 +177,13 @@ resource "libvirt_domain" "node" {
     ]
 
     interfaces = [{
-      mac    = { address = each.value.mac }
-      model  = { type = "virtio" }
-      source = { network = { network = libvirt_network.cluster.name } }
+      mac   = { address = each.value.mac }
+      model = { type = "virtio" }
+      source = {
+        network = var.bridge == null ? { network = one(libvirt_network.cluster[*].name) } : null
+        bridge  = var.bridge == null ? null : { bridge = var.bridge }
+      }
+      mtu = var.mtu == null ? null : { size = var.mtu }
     }]
 
     graphics = [{ vnc = { auto_port = true, listen = "127.0.0.1" } }]
