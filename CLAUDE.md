@@ -19,7 +19,7 @@ actually exists. The contract makes the part swappable, not an interface.
 
 ## One tofu state for every checkout
 
-The `backend "local"` block in `main.tf` keeps state at `/srv/rocky-cluster/terraform.tfstate`,
+The `backend "local"` block in `tofu/main.tf` keeps state at `/srv/rocky-cluster/terraform.tfstate`,
 and `just tofu` runs the host's `tofu` against it. Every checkout and every worktree under
 `.claude/worktrees/` therefore drives the same VMs on vcows under one lock. An apply from a
 worktree replaces whatever arrangement another session left running, and a destroy removes it. A

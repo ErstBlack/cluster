@@ -5,6 +5,6 @@ updates:
     schedule:
       interval: weekly
   - package-ecosystem: opentofu
-    directory: /
+    directory: /tofu
     schedule:
       interval: weekly

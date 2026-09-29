@@ -109,16 +109,16 @@ resource "libvirt_volume" "disk" {
 # on-link. Nodes need nothing outside the cluster, since the image is airgapped (#60).
 resource "libvirt_cloudinit_disk" "seed" {
   name = "${local.prefix}-seed"
-  user_data = templatefile("${path.module}/cloud-init/user-data.yaml.tftpl", {
+  user_data = templatefile("${path.module}/../cloud-init/user-data.yaml.tftpl", {
     ssh_keys            = local.ssh_keys
     token               = coalesce(var.rke2_token, random_password.rke2_token.result)
     vip                 = "${local.vip}/${split("/", local.network_cidr)[1]}"
     gateway             = var.bridge == null ? cidrhost(local.network_cidr, 1) : ""
     dns                 = var.bridge == null ? cidrhost(local.network_cidr, 1) : ""
     control_plane_count = var.control_plane_count
-    addr_py             = file("${path.module}/cloud-init/node_addr.py")
-    elect_py            = file("${path.module}/cloud-init/rke2_elect.py")
-    configure_py        = file("${path.module}/cloud-init/rke2_configure.py")
+    addr_py             = file("${path.module}/../cloud-init/node_addr.py")
+    elect_py            = file("${path.module}/../cloud-init/rke2_elect.py")
+    configure_py        = file("${path.module}/../cloud-init/rke2_configure.py")
   })
   meta_data = yamlencode({ instance-id = local.prefix })
 }

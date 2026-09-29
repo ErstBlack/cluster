@@ -10,6 +10,7 @@ unit:
     python3 -m unittest discover -s cloud-init
 
 # tofu fmt and tofu validate
+[working-directory('tofu')]
 tofu-check:
     tofu fmt -check -recursive
     tofu init -backend=false
@@ -27,7 +28,7 @@ cloud-init-schema:
     # once. podman rmi the tag to pick up a newer Rocky 10 cloud-init.
     image=localhost/cluster-cloud-init:$(sha256sum <<< "$containerfile" | cut -c1-12)
     podman image exists "$image" || podman build -t "$image" - <<< "$containerfile"
-    # tofu console runs in an empty directory so it does not load main.tf or the shared state.
+    # tofu console runs in an empty directory so it does not load tofu/main.tf or the shared state.
     cd "$(mktemp -d)"
     echo "base64encode(templatefile(\"$dir/user-data.yaml.tftpl\", {ssh_keys = [\"ssh-ed25519 AAAA sample\"], token = \"sample\", vip = \"192.0.2.10/24\", gateway = \"192.0.2.1\", dns = \"192.0.2.1\", control_plane_count = 3, addr_py = file(\"$dir/node_addr.py\"), elect_py = file(\"$dir/rke2_elect.py\"), configure_py = file(\"$dir/rke2_configure.py\")}))" \
       | tofu console | tr -d '"' | base64 -d \
@@ -51,6 +52,7 @@ image:
     image/build.sh
 
 # Run tofu, e.g. just tofu plan
+[working-directory('tofu')]
 tofu *args:
     #!/usr/bin/env bash
     set -euo pipefail
