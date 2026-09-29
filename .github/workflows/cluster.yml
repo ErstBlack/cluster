@@ -147,7 +147,7 @@ jobs:
       # The assignment fails the step when up fails. An argument's command substitution would not.
       - name: Create the overlay
         run: |
-          mtu=$(sudo ci/overlay.sh up ${{ github.run_id }} ${{ github.run_attempt }})
+          mtu=$(sudo ci/overlay.sh up "$RUN_NAME")
           echo "TF_VAR_mtu=$mtu" >> "$GITHUB_ENV"
 
       # Runs until the job ends. Its output goes to a file, so it does not hold this step open.
