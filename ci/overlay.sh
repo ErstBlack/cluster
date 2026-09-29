@@ -61,7 +61,12 @@ up() {
     sysctl --quiet --write net.bridge.bridge-nf-call-iptables=0 net.bridge.bridge-nf-call-ip6tables=0 \
       net.bridge.bridge-nf-call-arptables=0
   fi
-  ip link add "$vx" type vxlan id "$vni" local "$ts_ip" dstport 4789
+  # The VXLAN socket binds 0.0.0.0:4789 whatever local is (measured), so a frame could arrive from any interface. Only
+  # the tailnet, where Headscale shows each runner only its own user's peers, may reach it.
+  nft -f - <<<'table inet overlay { chain input { type filter hook input priority 0; policy accept;
+    iifname != "tailscale0" udp dport 4789 drop; }; }'
+  # No learning, so the FDB holds only the entries the reconciler puts there. Unicast then floods to every peer.
+  ip link add "$vx" type vxlan id "$vni" local "$ts_ip" dstport 4789 nolearning
   # No snooping, so multicast floods as on a plain switch. No IPv6 link-local addresses, so the host sends nothing
   # onto the segment by itself.
   ip link add "$br" type bridge stp_state 0 mcast_snooping 0
