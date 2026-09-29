@@ -1,0 +1,121 @@
+# Forms a fresh cluster for each case in ci/cases.json (#72). Lane A runs the 7-node cases and lane B the 3- to 6-node
+# cases, each one at a time, so nightly peaks at 13 runners of the 20 every workflow shares.
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      case:
+        description: Run only this case, e.g. late-joiner. Empty runs every case.
+        type: string
+      nodes:
+        description: Run only this size, 3 to 7. Empty runs every size.
+        type: string
+
+permissions:
+  contents: read
+
+# A dispatch queues behind a running nightly as a whole.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # Builds the image once on a cache miss, so the test slots never build it in parallel.
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # hashFiles is not available in job outputs, so a step records the key.
+      - id: key
+        run: echo "key=rocky-rke2-airgap-${{ hashFiles('image/*') }}" >> "$GITHUB_OUTPUT"
+
+      # The airgap- prefix keeps pre-airgap entries from being restored.
+      - id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: image/output/rocky-rke2.qcow2
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      # airgap.sh fetches into a fixed path under /srv, which the runner user cannot create.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo install -d -o "$USER" /srv/rocky-cluster/images/agent-images
+          image/build.sh
+
+      - id: save
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: image/output/rocky-rke2.qcow2
+          key: ${{ steps.key.outputs.key }}
+
+  # The rows of ci/cases.json that match the inputs, split by lane.
+  cases:
+    runs-on: ubuntu-24.04
+    outputs:
+      lane_a: ${{ steps.cases.outputs.lane_a }}
+      lane_b: ${{ steps.cases.outputs.lane_b }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: cases
+        run: |
+          for lane in a b; do
+            echo "lane_$lane=$(jq --compact-output --arg case "$CASE" --arg nodes "$NODES" --arg lane "$lane" \
+              '[.[] | select(.lane == $lane and ($case == "" or .case == $case) and ($nodes == "" or (.nodes | tostring) == $nodes))]' \
+              ci/cases.json)" >> "$GITHUB_OUTPUT"
+          done
+          grep --quiet --invert-match '=\[\]$' "$GITHUB_OUTPUT" || { echo "::error::no case in ci/cases.json matches"; exit 1; }
+        env:
+          CASE: ${{ inputs.case }}
+          NODES: ${{ inputs.nodes }}
+
+  lane-a:
+    needs: [image, cases]
+    if: needs.cases.outputs.lane_a != '[]'
+    name: ${{ matrix.id }}
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.cases.outputs.lane_a) }}
+    uses: ./.github/workflows/cluster.yml
+    secrets: inherit
+    with:
+      id: ${{ matrix.id }}
+      nodes: ${{ matrix.nodes }}
+      control_plane_count: ${{ matrix.control_plane_count }}
+      case: ${{ matrix.case }}
+      test: ${{ matrix.test }}
+      expect_nodes: ${{ matrix.expect_nodes }}
+      expect_servers: ${{ matrix.expect_servers }}
+      image_key: ${{ needs.image.outputs.key }}
+
+  lane-b:
+    needs: [image, cases]
+    if: needs.cases.outputs.lane_b != '[]'
+    name: ${{ matrix.id }}
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.cases.outputs.lane_b) }}
+    uses: ./.github/workflows/cluster.yml
+    secrets: inherit
+    with:
+      id: ${{ matrix.id }}
+      nodes: ${{ matrix.nodes }}
+      control_plane_count: ${{ matrix.control_plane_count }}
+      case: ${{ matrix.case }}
+      test: ${{ matrix.test }}
+      expect_nodes: ${{ matrix.expect_nodes }}
+      expect_servers: ${{ matrix.expect_servers }}
+      image_key: ${{ needs.image.outputs.key }}

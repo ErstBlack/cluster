@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Join this runner's node to one L2 segment shared by every runner of the CI run: unicast VXLAN over the run's
 # Headscale tailnet, plugged into a plain Linux bridge that the node's NIC attaches to (#53). Runs as root.
-#   up <run-id> <attempt>    create the bridge and the VXLAN port, print the MTU the node must use
+#   up <name>                create the bridge and the VXLAN port, print the MTU the node must use
 #   reconcile                every 5 s, point one all-zeros FDB entry at each online peer of this run, and drop the
 #                            entries of peers that left. Exits on a peer from another run, or after 3 failed reads
 #                            of the tailnet in a row.
@@ -68,9 +68,10 @@ fdb_peers() {
 
 up() {
   local vni ts_ip mtu mac a b c d
-  # 24 bits: the run id's low 20 bits and the attempt's low 4. Only this run's peers are in the FDB, so the VNI only
-  # keeps a stray packet from another run or attempt off this segment.
-  vni=$(((${1:?} % 1048576) << 4 | ${2:?} % 16))
+  # 24 bits of the SHA-256 of the cluster's name. The clusters of one run share its run id and attempt, so the name is
+  # what tells them apart. Only this cluster's peers are in the FDB, so the VNI only keeps a stray frame off this
+  # segment.
+  vni=$((16#$(printf %s "${1:?}" | sha256sum | cut -c1-6)))
   ts_ip=$(tailscale ip -4)
   # VXLAN over IPv4 adds 50 bytes to each frame.
   mtu=$(($(cat /sys/class/net/tailscale0/mtu) - 50))
@@ -196,7 +197,7 @@ preflight() {
 
 case $verb in
   up | reconcile | preflight) ;;
-  *) echo "usage: $0 up <run-id> <attempt> | reconcile | preflight <slot> <n>" >&2; exit 2 ;;
+  *) echo "usage: $0 up <name> | reconcile | preflight <slot> <n>" >&2; exit 2 ;;
 esac
 # Reports any failure that fail did not already explain, such as a failed ip command or a missing bridge.
 on_exit() {
