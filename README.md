@@ -17,7 +17,9 @@ UEFI with Secure Boot on (Microsoft keys enrolled, so Rocky's signed shim verifi
 console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-cluster`
 (192.168.150.0/24), which has no DHCP. Every volume sits in the `rocky-cluster` pool, which tofu creates at
 `pool_dir`, by default `/dev/shm/rocky-cluster` in vcows' RAM. `just tofu destroy` frees it. A vcows reboot
-empties it and leaves the pool without its directory, so destroy before rebooting vcows.
+empties it and leaves the pool without its directory, so destroy before rebooting vcows. `/dev/shm` is
+world-writable, so this default assumes vcows has no untrusted local users: one could create the directory
+first and read the seed volumes, which carry the join token.
 
 ## Use
 
