@@ -4,18 +4,22 @@ A Rocky Linux 10 golden image (`image/`) whose nodes form an RKE2 cluster at fir
 through cloud-init and `cloud-init/rke2_elect.py`. Real deployments are independent physical and
 virtual nodes, each started on its own with no orchestrator.
 
-The OpenTofu project in `tofu/` is the test harness. It runs nine VMs, `Rocky-Cluster-1` to
-`Rocky-Cluster-9`, on the KVM host `vcows`. Host `tofu` reaches libvirt at `qemu+sshcmd://vcows/system`
+The OpenTofu project in `tofu/` is the test harness. It runs seven VMs, `Rocky-Cluster-1` to
+`Rocky-Cluster-7`, on the KVM host `vcows`. Host `tofu` reaches libvirt at `qemu+sshcmd://vcows/system`
 through the `vcows` entry in `~/.ssh/config`.
 
 | VM | MAC |
 |---|---|
 | Rocky-Cluster-N | `52:54:00:c1:00:0N` |
 
-Each VM has 4 vCPU (host-passthrough), 8 GiB RAM, a 40 GiB thin qcow2 overlay on a shared base image,
+Each VM has 4 vCPU (host-passthrough), 4 GiB RAM, a 40 GiB thin qcow2 overlay on a shared base image,
 UEFI with Secure Boot on (Microsoft keys enrolled, so Rocky's signed shim verifies), VNC and a serial
 console, and `qemu-guest-agent`. The VMs sit on their own NAT network `rocky-cluster`
-(192.168.150.0/24), which has no DHCP. Every volume tofu creates in the `images` pool is prefixed `rocky-cluster-`.
+(192.168.150.0/24), which has no DHCP. Every volume sits in the `rocky-cluster` pool, which tofu creates at
+`pool_dir`, by default `/dev/shm/rocky-cluster` in vcows' RAM. `just tofu destroy` frees it. A vcows reboot
+empties it and leaves the pool without its directory, so destroy before rebooting vcows. `/dev/shm` is
+world-writable, so this default assumes vcows has no untrusted local users: one could create the directory
+first and read the seed volumes, which carry the join token.
 
 ## Use
 

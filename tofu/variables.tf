@@ -3,14 +3,15 @@ variable "libvirt_uri" {
   default = "qemu+sshcmd://vcows/system"
 }
 
-variable "pool" {
+# The directory of the pool tofu creates. The default keeps every volume in RAM.
+variable "pool_dir" {
   type    = string
-  default = "images"
+  default = "/dev/shm/rocky-cluster"
 }
 
 variable "node_count" {
   type    = number
-  default = 9
+  default = 7
 
   validation {
     condition     = var.node_count >= 1 && var.node_count <= 9 && floor(var.node_count) == var.node_count
@@ -36,7 +37,7 @@ variable "vcpu" {
 
 variable "memory_mib" {
   type    = number
-  default = 8192
+  default = 4096
 }
 
 variable "disk_gib" {

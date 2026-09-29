@@ -72,11 +72,23 @@ resource "libvirt_network" "cluster" {
   }]
 }
 
+# A dir pool tofu owns. Its destroy removes the directory, which frees the RAM of the default /dev/shm path.
+resource "libvirt_pool" "cluster" {
+  name   = local.prefix
+  type   = "dir"
+  target = { path = var.pool_dir }
+}
+
 resource "libvirt_volume" "base" {
   name   = "${local.prefix}-base-rocky10.qcow2"
-  pool   = var.pool
+  pool   = libvirt_pool.cluster.name
   target = { format = { type = "qcow2" } }
   create = { content = { url = var.base_image_url } }
+
+  # Volumes name the pool, which keeps its name when pool_dir replaces it. The disks follow the base.
+  lifecycle {
+    replace_triggered_by = [libvirt_pool.cluster.id]
+  }
 }
 
 # Stands in for the RequiresReplace that provider v0.9.9 lacks on volume capacity (its Update always errors).
@@ -89,7 +101,7 @@ resource "libvirt_volume" "disk" {
   for_each = local.nodes
 
   name     = "${each.value.hostname}.qcow2"
-  pool     = var.pool
+  pool     = libvirt_pool.cluster.name
   capacity = var.disk_gib * 1024 * 1024 * 1024
   target   = { format = { type = "qcow2" } }
   backing_store = {
@@ -127,8 +139,12 @@ resource "libvirt_volume" "seed" {
   for_each = local.nodes
 
   name   = "${each.value.hostname}-seed.iso"
-  pool   = var.pool
+  pool   = libvirt_pool.cluster.name
   create = { content = { url = libvirt_cloudinit_disk.seed.path } }
+
+  lifecycle {
+    replace_triggered_by = [libvirt_pool.cluster.id]
+  }
 }
 
 resource "libvirt_domain" "node" {
@@ -140,6 +156,7 @@ resource "libvirt_domain" "node" {
   memory      = var.memory_mib
   memory_unit = "MiB"
   running     = true
+  io_threads  = 1
 
   cpu = { mode = "host-passthrough" }
   # The sb-enrolled OVMF build requires SMM.
@@ -163,15 +180,24 @@ resource "libvirt_domain" "node" {
   devices = {
     disks = [
       {
-        source = { volume = { pool = var.pool, volume = libvirt_volume.disk[each.key].name } }
+        source = { volume = { pool = libvirt_pool.cluster.name, volume = libvirt_volume.disk[each.key].name } }
         target = { bus = "virtio", dev = "vda" }
         # The host ignores guest flushes. Every VM shares the host's disks, and etcd's fsyncs stall behind
         # the other nodes' image pulls. A host crash can corrupt the disks, which are disposable test VMs.
-        driver = { type = "qcow2", cache = "unsafe" }
+        # The iothread takes disk IO off the vCPU threads. io stays threads, since tmpfs has no O_DIRECT.
+        # detect_zeros keeps zero writes from allocating, and discard frees the blocks the guest trims.
+        driver = {
+          type         = "qcow2"
+          cache        = "unsafe"
+          io_thread    = 1
+          discard      = "unmap"
+          detect_zeros = "unmap"
+          queues       = var.vcpu
+        }
       },
       {
         device = "cdrom"
-        source = { volume = { pool = var.pool, volume = libvirt_volume.seed[each.key].name } }
+        source = { volume = { pool = libvirt_pool.cluster.name, volume = libvirt_volume.seed[each.key].name } }
         target = { bus = "sata", dev = "sda" }
       },
     ]

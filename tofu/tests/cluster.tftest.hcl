@@ -3,7 +3,6 @@
 variables {
   libvirt_uri = "qemu:///system"
   node_count  = 3
-  memory_mib  = 4096
 }
 
 run "apply" {

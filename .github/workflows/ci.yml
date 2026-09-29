@@ -97,6 +97,8 @@ jobs:
     env:
       TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
       TF_VAR_libvirt_uri: qemu:///system
+      # On disk: the runner's /dev/shm is 8 GB.
+      TF_VAR_pool_dir: /var/lib/libvirt/images/rocky-cluster
       TF_VAR_slot: ${{ matrix.slot }}
       # The bridge ci/overlay.sh creates.
       TF_VAR_bridge: br-cluster
@@ -137,9 +139,6 @@ jobs:
           echo 'security_driver = "none"' | sudo tee -a /etc/libvirt/qemu.conf
           sudo systemctl restart libvirtd
           sudo setfacl -m "u:$USER:rw" /var/run/libvirt/libvirt-sock
-          virsh -c qemu:///system pool-define-as images dir --target /var/lib/libvirt/images
-          virsh -c qemu:///system pool-build images
-          virsh -c qemu:///system pool-start images
 
       # tofu/main.tf selects Secure Boot firmware with Microsoft keys enrolled. Fail here if ovmf ships no such descriptor.
       - name: Check OVMF enrolled-keys descriptor
