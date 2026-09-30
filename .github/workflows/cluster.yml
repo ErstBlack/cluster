@@ -271,7 +271,8 @@ jobs:
       - if: always()
         run: sudo tailscale logout
 
-  # "Re-run failed jobs" reuses this job's output, whose user cleanup already removed. Only "Re-run all jobs" works.
+  # "Re-run failed jobs" reuses this job's output, whose key expires after 2 h and whose user janitor.yml removes after
+  # 3 h. "Re-run all jobs" makes a new user.
   tailnet:
     runs-on: ubuntu-24.04
     environment: headscale
@@ -297,17 +298,3 @@ jobs:
           echo "slots=$(jq --compact-output --null-input --argjson n "$NODES" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
         env:
           NODES: ${{ inputs.nodes }}
-
-  # The user name comes from the run, not from tailnet's output, so a tailnet job that failed midway is cleaned up too.
-  cleanup:
-    needs: [tailnet, test]
-    if: always()
-    runs-on: ubuntu-24.04
-    environment: headscale
-    steps:
-      - uses: actions/checkout@v7
-
-      - run: ci/headscale.sh cleanup "$RUN_NAME"
-        env:
-          HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
-          HEADSCALE_API_KEY: ${{ secrets.HEADSCALE_API_KEY }}
