@@ -1,7 +1,12 @@
 # Dispatches nightly.yml on master. Started by cluster-nightly.timer, which says how to install it.
 [Unit]
 Description=Dispatch the cluster nightly workflow
+# A failed dispatch (a GitHub 5xx, or a catch-up run at boot before DNS works) retries every 60 s, 5 times at most.
+StartLimitIntervalSec=900
+StartLimitBurst=5
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/gh workflow run nightly.yml --repo ErstBlack/cluster --ref master
+Restart=on-failure
+RestartSec=60
