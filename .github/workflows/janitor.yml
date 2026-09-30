@@ -1,4 +1,4 @@
-# Removes the Headscale users of runs that died before their cleanup job ran.
+# Removes the Headscale users of CI runs older than 3 h. Nothing else removes them (#85).
 name: janitor
 
 # ci/systemd/cluster-janitor.timer dispatches it hourly, since GitHub's schedule started late or not at all. The
