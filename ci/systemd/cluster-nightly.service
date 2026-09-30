@@ -1,0 +1,7 @@
+# Dispatches nightly.yml on master. Started by cluster-nightly.timer, which says how to install it.
+[Unit]
+Description=Dispatch the cluster nightly workflow
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh workflow run nightly.yml --repo ErstBlack/cluster --ref master

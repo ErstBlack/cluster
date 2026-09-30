@@ -2,9 +2,8 @@
 # cases, each one at a time, so nightly peaks at 13 runners of the 20 every workflow shares.
 name: nightly
 
+# ci/systemd/cluster-nightly.timer dispatches it daily at 06:00 UTC, since GitHub's schedule started hours late.
 on:
-  schedule:
-    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       case:

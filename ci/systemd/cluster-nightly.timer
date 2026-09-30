@@ -1,0 +1,17 @@
+# Dispatches the nightly workflow at 06:00 UTC (1am EST) from rocky-runner (#72). Replaces GitHub's schedule, which
+# started the 06:00 nightly at 11:47 UTC on 2026-09-30 and the hourly janitor only 7 times in ~2.5 days, each 10-54
+# min late. A gh workflow run dispatch starts at once.
+#
+# Install as the runner user, which needs lingering (loginctl enable-linger) and a gh logged in with repo scope:
+#   cp ci/systemd/cluster-* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now cluster-nightly.timer cluster-janitor.timer
+[Unit]
+Description=Dispatch the cluster nightly workflow daily at 06:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

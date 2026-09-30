@@ -1,0 +1,10 @@
+# Dispatches the janitor workflow every hour. cluster-nightly.timer says why and how to install it.
+[Unit]
+Description=Dispatch the cluster janitor workflow hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

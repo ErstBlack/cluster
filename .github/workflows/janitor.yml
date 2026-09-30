@@ -1,9 +1,8 @@
 # Removes the Headscale users of runs that died before their cleanup job ran.
 name: janitor
 
+# ci/systemd/cluster-janitor.timer dispatches it hourly, since GitHub's schedule started late or not at all.
 on:
-  schedule:
-    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       hours:
@@ -25,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # A scheduled run has no inputs.
+      # A dispatch without inputs gets the default 3, and the fallback covers an empty value.
       - run: ci/headscale.sh janitor "${HOURS:-3}"
         env:
           HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}

@@ -1,0 +1,7 @@
+# Dispatches janitor.yml on master with its default hours. Started by cluster-janitor.timer.
+[Unit]
+Description=Dispatch the cluster janitor workflow
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh workflow run janitor.yml --repo ErstBlack/cluster --ref master
