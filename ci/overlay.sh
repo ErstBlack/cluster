@@ -192,6 +192,7 @@ preflight() {
   done
   counts=$(for s in "${others[@]}"; do echo_replies "$s"; done)
   while sleep 20; now=$(for s in "${others[@]}"; do echo_replies "$s"; done); [[ $now != "$counts" ]]; do
+    ((SECONDS < 600)) || fail "peers still pinging this host after 10 minutes"
     counts=$now
   done
   ip address del "198.18.0.$slot/24" dev "$br"
