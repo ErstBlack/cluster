@@ -96,6 +96,32 @@ class Elect(unittest.TestCase):
     def test_vip_answering_means_agent(self):
         self.assertEqual(run(A, lambda t: [], vip=lambda: True), [])
 
+    def test_beacon_from_another_key_changes_nothing(self):
+        # rogue_beacons in ci/case.sh: a node with the wrong key, a winning token and its own decision.
+        rogue = (2**64, "10.0.0.9")
+        wire = [
+            sign(b"k", beacon(B)),
+            sign(b"not-the-token", beacon(rogue)),
+            sign(b"not-the-token", beacon(rogue, [rogue])),
+        ]
+        # The filter exchange() applies to what it receives.
+        heard = lambda t: [b for b in (verify(b"k", w) for w in wire) if b]
+        self.assertEqual(run(D, heard), [B, D])
+
+    def test_staggered_peers_are_one_decision(self):
+        # Each peer arrives just inside the quiet window the one before it opened.
+        start = {B: INTERVAL, C: SETTLE, A: 2 * SETTLE - INTERVAL}
+        heard = lambda t: [beacon(p) for p, s in start.items() if t >= s]
+        self.assertEqual(run(D, heard), [A, C, B])
+
+    def test_late_node_adopts_the_decision_as_agent(self):
+        # A has the highest token but finds the decision made, during GRACE or after it.
+        decided = run(A, lambda t: [beacon(p, [B, C, D]) for p in (B, C, D)])
+        self.assertEqual(decided, [B, C, D])
+        self.assertEqual(role_of(A, decided), ("agent", False))
+        after = run(A, lambda t: [], vip=lambda: True)
+        self.assertEqual(role_of(A, after), ("agent", False))
+
 
 class State(unittest.TestCase):
     def test_token_survives_a_restart(self):
