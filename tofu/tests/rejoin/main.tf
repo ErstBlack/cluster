@@ -11,13 +11,8 @@ resource "terraform_data" "rejoin" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T rejoin: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh rejoin ${var.vip}
       log "waiting for the old VIP holder to return, via ${var.vip}"
-      vip_ssh() {
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@${var.vip}" "$@"
-      }
       k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
       # Fails if var.vip answers from a server other than $holder. An empty answer is a failed read, not a move.
       stays() {

@@ -16,13 +16,8 @@ resource "terraform_data" "failover" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T failover: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh failover ${var.vip}
       log "finding the server holding ${var.vip}"
-      vip_ssh() {
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@${var.vip}" "$@"
-      }
       old=$(vip_ssh hostname)
       [ -n "$old" ] || { echo "no server answers ssh on ${var.vip}" >&2; exit 1; }
       log "running '${var.action}' on $old"

@@ -3,8 +3,7 @@
 #   setup <user>      create the user, mint its key, the RKE2 token and an ssh key, print them encrypted with
 #                     CI_PASSPHRASE as HEADSCALE_URL, TS_AUTHKEY, RKE2_TOKEN and SSH_KEY lines
 #   cleanup <user>    expire the user's keys, delete its nodes, delete the user. A missing user is success.
-#   janitor <hours>   run cleanup on every ci-<run>-<attempt>-<id> user older than <hours>, and on every
-#                     ci-<run>-<attempt> user from before cluster.yml
+#   janitor <hours>   run cleanup on every ci-<run>-<attempt>-<id> user older than <hours>
 # Reads HEADSCALE_URL and HEADSCALE_API_KEY. Every secret is masked before anything can print it, and curl's errors
 # never include the URL.
 set -euo pipefail
@@ -72,7 +71,7 @@ cleanup() {
 janitor() {
   local users user failed=0
   users=$(api GET user | jq --raw-output --argjson hours "$1" '.users[]?
-    | select((.name | test("^ci-[0-9]+-[0-9]+(-[a-z0-9-]+)?$")) and (.createdAt | sub("\\.[0-9]+"; "") | fromdateiso8601) < now - $hours * 3600)
+    | select((.name | test("^ci-[0-9]+-[0-9]+-[a-z0-9-]+$")) and (.createdAt | sub("\\.[0-9]+"; "") | fromdateiso8601) < now - $hours * 3600)
     | .name')
   for user in $users; do
     "$0" cleanup "$user" || failed=1

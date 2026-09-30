@@ -9,16 +9,8 @@ resource "terraform_data" "agent_crash" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T agent_crash: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh agent_crash ${var.vip}
       log "picking an agent to crash, via ${var.vip}"
-      node_ssh() {
-        local host=$1
-        shift
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@$host" "$@"
-      }
-      vip=${var.vip}
       k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
       read -r agent ip <<<"$(node_ssh "$vip" "$k get nodes -l node-role.kubernetes.io/control-plane!=true -o jsonpath=\"{.items[0].metadata.name} {.items[0].status.addresses[?(@.type==\\\"InternalIP\\\")].address}\"")"
       [ -n "$ip" ] || { echo "no agent from kubectl on $vip" >&2; exit 1; }

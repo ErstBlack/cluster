@@ -10,15 +10,8 @@ resource "terraform_data" "dropped_peer" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T dropped_peer: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh dropped_peer ${var.vip}
       log "searching every node's rke2-elect journal for a dropped silent peer, via ${var.vip}"
-      node_ssh() {
-        local host=$1
-        shift
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@$host" "$@"
-      }
       ips=$(node_ssh ${var.vip} 'sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes \
         -o jsonpath="{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}"')
       [ -n "$ips" ] || { echo "no InternalIP from kubectl on ${var.vip}" >&2; exit 1; }

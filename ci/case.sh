@@ -116,9 +116,6 @@ case $verb in
 esac
 : "${slot:?}" "${n:?}"
 # A misspelt case would otherwise run as happy.
-case $name in
-  happy | addr-conflict | late-carrier | reboot | staggered | late-joiner | dies-before-decision | rogue-beacons | \
-    cp-1 | cp-5 | rke2-stop | holder-returns | agent-crash | bootstrap-dies) ;;
-  *) echo "unknown case: $name" >&2; exit 2 ;;
-esac
+jq --exit-status --arg c "$name" 'any(.[]; .case == $c)' ci/cases.json >/dev/null ||
+  { echo "unknown case: $name" >&2; exit 2; }
 "$verb"
