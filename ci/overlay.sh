@@ -141,10 +141,11 @@ echo_replies() {
 }
 
 # Each host takes 198.18.0.<slot> on the bridge for the check, and gives it up before the node starts. It keeps the
-# address until it has answered a ping from every peer, which nftables counters show, so a host that finishes first
-# never fails a slower one. The wait allows for slots that queue behind the account's job limit.
+# address until it has answered a ping from every peer, which nftables counters show, and then until no peer has
+# pinged it for 20 s. A counted reply can still be lost on a new path, and the peer then pings again within 6 s, so
+# the address outlives every retry (#84). The wait allows for slots that queue behind the account's job limit.
 preflight() {
-  local slot=${1:?} n=${2:?} mtu s have paths peers counters="" rules="" others=()
+  local slot=${1:?} n=${2:?} mtu s have paths peers counts now counters="" rules="" others=()
   mtu=$(cat "/sys/class/net/$br/mtu")
   for ((s = 1; s <= n; s++)); do
     ((s == slot)) || others+=("$s")
@@ -169,6 +170,10 @@ preflight() {
   # new Tailscale path can take seconds, hence the long reply timeout. A peer in the FDB has already joined and takes
   # its address seconds later, so 2 minutes is plenty.
   ip neigh flush dev "$br"
+  paths=$(tailscale status --json | jq --raw-output '.Self.UserID as $me | .Peer // {} | .[] | select(.UserID == $me)
+    | if (.CurAddr // "") != "" then "\(.HostName): direct \(.CurAddr)"
+      else "::warning::\(.HostName): relayed via DERP \(.Relay)" end')
+  echo "$paths"
   SECONDS=0
   for s in "${others[@]}"; do
     until ping -q -M "do" -s $((mtu - 28)) -c 1 -W 5 "198.18.0.$s" >/dev/null; do
@@ -177,10 +182,6 @@ preflight() {
     done
     echo "slot $s answers at MTU $mtu"
   done
-  paths=$(tailscale status --json | jq --raw-output '.Self.UserID as $me | .Peer // {} | .[] | select(.UserID == $me)
-    | if (.CurAddr // "") != "" then "\(.HostName): direct \(.CurAddr)"
-      else "::warning::\(.HostName): relayed via DERP \(.Relay)" end')
-  echo "$paths"
   for s in "${others[@]}"; do
     while :; do
       have=$(echo_replies "$s")
@@ -189,7 +190,10 @@ preflight() {
       sleep 1
     done
   done
-  sleep 1
+  counts=$(for s in "${others[@]}"; do echo_replies "$s"; done)
+  while sleep 20; now=$(for s in "${others[@]}"; do echo_replies "$s"; done); [[ $now != "$counts" ]]; do
+    counts=$now
+  done
   ip address del "198.18.0.$slot/24" dev "$br"
   nft delete table inet preflight
   ip neigh flush dev "$br"
