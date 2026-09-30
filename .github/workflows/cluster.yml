@@ -1,0 +1,313 @@
+# One cluster of one node per runner, for ci.yml and nightly.yml. id names the cluster within its run, and the case
+# selects ci/case.sh's injections and the tofu test slot 1 runs (ci/cases.json).
+name: cluster
+
+on:
+  workflow_call:
+    inputs:
+      id:
+        description: Unique within the calling run. Lowercase letters, digits and hyphens.
+        type: string
+        required: true
+      nodes:
+        description: Nodes launched, one per runner, late or killed ones included.
+        type: number
+        required: true
+      control_plane_count:
+        type: number
+        required: true
+      case:
+        description: The case ci/case.sh injects.
+        type: string
+        required: true
+      test:
+        description: The tofu test slot 1 runs, tofu/tests/<test>.tftest.hcl.
+        type: string
+        required: true
+      expect_nodes:
+        type: number
+        required: true
+      expect_servers:
+        type: number
+        required: true
+      image_key:
+        description: The image's cache key.
+        type: string
+        required: true
+
+env:
+  # The Headscale user, and with -<slot> each runner's tailnet hostname. Lowercase, digits and hyphens.
+  RUN_NAME: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.id }}
+
+jobs:
+  # One node per runner, all on one L2 segment over the run's tailnet (ci/overlay.sh). Slot 1 holds the host's .1 and
+  # checks the cluster. The other slots hold their node until slot 1 leaves the tailnet.
+  test:
+    needs: tailnet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      # A failed slot cancels the others, so slots holding their node never wait out their timeout for a slot 1 that
+      # died without logging out.
+      fail-fast: true
+      matrix:
+        slot: ${{ fromJSON(needs.tailnet.outputs.slots) }}
+    env:
+      TF_VAR_base_image_url: ${{ github.workspace }}/image/output/rocky-rke2.qcow2
+      TF_VAR_libvirt_uri: qemu:///system
+      # On disk: the runner's /dev/shm is 8 GB.
+      TF_VAR_pool_dir: /var/lib/libvirt/images/rocky-cluster
+      TF_VAR_slot: ${{ matrix.slot }}
+      # The bridge ci/overlay.sh creates.
+      TF_VAR_bridge: br-cluster
+      TF_VAR_nodes: ${{ inputs.nodes }}
+      TF_VAR_control_plane_count: ${{ inputs.control_plane_count }}
+      # The counts the case's tofu test expects. Undeclared in tofu/variables.tf, so apply ignores them.
+      TF_VAR_expect_nodes: ${{ inputs.expect_nodes }}
+      TF_VAR_expect_servers: ${{ inputs.expect_servers }}
+      CASE: ${{ inputs.case }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: image/output/rocky-rke2.qcow2
+          key: ${{ inputs.image_key }}
+
+      # The entry can be evicted after the image job saw it. The slot then rebuilds rather than fails, and does not save.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo install -d -o "$USER" /srv/rocky-cluster/images/agent-images
+          image/build.sh
+
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_wrapper: false
+
+      - uses: extractions/setup-just@v4
+
+      # The slots that run tofu apply keep the backend's state under /srv, which the runner user cannot create.
+      # init fetches the providers from github.com, which failed once mid-nightly (run 36602051666), so it gets 3 tries.
+      - run: |
+          sudo install -d -o "$USER" /srv/rocky-cluster
+          for try in 1 2 3; do
+            just tofu init && exit 0
+            echo "tofu init failed (try $try of 3)"
+            sleep 15
+          done
+          exit 1
+
+      # nftables counts the pings of ci/overlay.sh preflight.
+      - name: Install libvirt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvirt-daemon-system qemu-system-x86 qemu-utils ovmf dnsmasq-base nftables
+          # virt-aa-helper leaves the backing image of a type='volume' disk out of the VM's AppArmor profile, so qemu
+          # gets "Permission denied" on the base volume (DAC ruled out). The runner is discarded, so run without it.
+          echo 'security_driver = "none"' | sudo tee -a /etc/libvirt/qemu.conf
+          sudo systemctl restart libvirtd
+          sudo setfacl -m "u:$USER:rw" /var/run/libvirt/libvirt-sock
+
+      # tofu/main.tf selects Secure Boot firmware with Microsoft keys enrolled. Fail here if ovmf ships no such descriptor.
+      - name: Check OVMF enrolled-keys descriptor
+        run: grep -l '"enrolled-keys"' /usr/share/qemu/firmware/*.json
+
+      # Installed before the bundle is decrypted, so the third-party script never sees the secrets in the environment.
+      - run: curl --fail --silent --show-error --location https://tailscale.com/install.sh | sh
+
+      # The bundle shows in this step's env in a public log, so CI_PASSPHRASE must be random, e.g. openssl rand -base64 32.
+      # Sets HEADSCALE_URL, TS_AUTHKEY, RKE2_TOKEN and SSH_KEY for later steps, each masked before it reaches GITHUB_ENV.
+      # A line splits at its first =, since a base64 value can end in one.
+      - name: Decrypt the bundle
+        run: |
+          bundle=$(openssl enc -d -aes-256-cbc -pbkdf2 -a -A -pass env:CI_PASSPHRASE <<<"$BUNDLE")
+          while IFS= read -r line; do
+            name=${line%%=*}
+            value=${line#*=}
+            echo "::add-mask::$value"
+            if [[ $name == HEADSCALE_URL ]]; then
+              host=${value#*://}
+              echo "::add-mask::${host%%[/:]*}"
+            fi
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done <<<"$bundle"
+        env:
+          BUNDLE: ${{ needs.tailnet.outputs.bundle }}
+          CI_PASSPHRASE: ${{ secrets.CI_PASSPHRASE }}
+
+      # tofu/main.tf puts every ~/.ssh/*.pub into cloud-init. Every slot installs the run's key, so slot 1 logs in to the
+      # node holding the VIP on any runner.
+      # A bundle short of a value fails here, not as a cluster that never forms.
+      - run: |
+          : "${RKE2_TOKEN:?}" "${SSH_KEY:?}"
+          install -d -m 700 ~/.ssh
+          (umask 077 && base64 -d <<<"$SSH_KEY" > ~/.ssh/id_ed25519)
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
+
+      # No --advertise-tags: a tagged node falls outside the server's autogroup:self grant.
+      # --accept-dns=false keeps the runner's own DNS. With the tailnet's DNS, GitHub's hosted-compute watchdog host
+      # stops resolving and the platform shuts the runner down about 16 min later (spike runs 36651322594, 36653443561).
+      # The overlay uses tailnet addresses, not names.
+      - run: >-
+          sudo tailscale up --login-server "$HEADSCALE_URL" --auth-key "$TS_AUTHKEY"
+          --hostname "$RUN_NAME-${{ matrix.slot }}" --accept-dns=false
+
+      # The assignment fails the step when up fails. An argument's command substitution would not.
+      - name: Create the overlay
+        run: |
+          mtu=$(sudo ci/overlay.sh up "$RUN_NAME")
+          echo "TF_VAR_mtu=$mtu" >> "$GITHUB_ENV"
+
+      # Runs until the job ends. Its output goes to a file, so it does not hold this step open.
+      - id: reconcile
+        run: |
+          # The log belongs to the runner user, so later steps read it without sudo.
+          # shellcheck disable=SC2024
+          sudo ci/overlay.sh reconcile </dev/null >"$RUNNER_TEMP/reconcile.log" 2>&1 &
+          echo $! >"$RUNNER_TEMP/reconcile.pid"
+
+      # Samples the runner every 30 s until the job ends, so a job GitHub cancels leaves a record of the runner's state.
+      # Slot 1's test step and the other slots' hold step also print the samples live, since a runner that GitHub shuts
+      # down never runs its always() steps (bootstrap-dies-3 in run 36639107201).
+      - run: |
+          while :; do
+            echo "$(date +%T) load $(cut -d' ' -f1-3 /proc/loadavg)" \
+              "memavail $(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)M" \
+              "vm $(virsh --connect qemu:///system domstate "Rocky-Cluster-$SLOT" 2>&1 | head -n 1)" \
+              "tailscale $(tailscale status --json 2>/dev/null | jq --raw-output .BackendState)"
+            sleep 30
+          done </dev/null >"$RUNNER_TEMP/health.log" 2>&1 &
+        env:
+          SLOT: ${{ matrix.slot }}
+
+      - run: sudo ci/overlay.sh preflight ${{ matrix.slot }} ${{ inputs.nodes }}
+
+      # The host's .1 in tofu/main.tf's network_cidr, so tests/ready reaches the VIP from this runner.
+      - if: matrix.slot == 1
+        run: sudo ip address add 192.168.150.1/24 dev br-cluster
+
+      - run: ci/case.sh pre "$CASE" ${{ matrix.slot }} ${{ inputs.nodes }}
+
+      # tofu test hides provisioner output, so the helpers under tofu/tests also write it to TEST_LOG, which tail shows
+      # live along with the runner samples. The sleep lets tail print the last lines before it is stopped.
+      - if: matrix.slot == 1
+        run: |
+          export TEST_LOG=$RUNNER_TEMP/tofu-test.log
+          touch "$TEST_LOG"
+          tail --quiet -F -n +0 "$TEST_LOG" "$RUNNER_TEMP/health.log" &
+          tail_pid=$!
+          rc=0
+          just tofu test "-filter=tests/$TEST.tftest.hcl" || rc=$?
+          sleep 1
+          kill "$tail_pid"
+          exit "$rc"
+        env:
+          TF_VAR_rke2_token: ${{ env.RKE2_TOKEN }}
+          TEST: ${{ inputs.test }}
+
+      - if: matrix.slot != 1
+        run: just tofu apply -auto-approve
+        env:
+          TF_VAR_rke2_token: ${{ env.RKE2_TOKEN }}
+
+      - if: matrix.slot != 1
+        run: ci/case.sh post "$CASE" ${{ matrix.slot }} ${{ inputs.nodes }}
+
+      # Slot 1 logs out when its test ends, which deletes its ephemeral node. Fails at once if the reconciler stops.
+      # A failed read, or tailscale not Running, never reads as slot 1 gone. Three in a row fail the step.
+      - name: Hold the node until slot 1 finishes
+        if: matrix.slot != 1
+        run: |
+          host=$RUN_NAME-1
+          errors=0 polls=0
+          while :; do
+            if status=$(tailscale status --json) && here=$(jq --exit-status --arg host "$host" '
+                if .BackendState != "Running" then error("tailscale is \(.BackendState)")
+                elif .Self.UserID == null then error("no Self.UserID") else . end
+                | .Self.UserID as $me | [.Peer // {} | .[] | select(.UserID == $me and .HostName == $host)] | length' \
+                <<<"$status"); then
+              errors=0
+              ((here)) || exit 0
+            elif ((++errors >= 3)); then
+              echo "INFRASTRUCTURE: could not read this run's peers 3 times in a row"
+              exit 1
+            fi
+            if ! ps -p "$(cat "$RUNNER_TEMP/reconcile.pid")" >/dev/null; then
+              cat "$RUNNER_TEMP/reconcile.log"
+              exit 1
+            fi
+            ((++polls % 6)) || echo "$(date +%T) $host is still on the tailnet. $(tail -n 1 "$RUNNER_TEMP/health.log")"
+            sleep 10
+          done
+
+      # Before the logout, which would stop the reconciler.
+      - name: Check the reconciler
+        if: always() && steps.reconcile.outcome == 'success'
+        run: |
+          cat "$RUNNER_TEMP/reconcile.log"
+          ps -p "$(cat "$RUNNER_TEMP/reconcile.pid")" >/dev/null || { echo "the reconciler stopped"; exit 1; }
+
+      # The log of work ci/case.sh started in the background, if any.
+      - if: always()
+        run: cat "$RUNNER_TEMP/case.log" 2>/dev/null || true
+
+      # Why the job ended: the last runner samples, any kernel OOM kill, and the runner's own log of cancellation and
+      # shutdown requests. The job log is public and the runner's log is not masked, so no text of it is printed: only
+      # each line's [time level component] and a fixed label. The runner logs "Force kill process on cancellation" for
+      # every step, so those lines are dropped.
+      - if: always()
+        run: |
+          tail -n 30 "$RUNNER_TEMP/health.log" 2>/dev/null || true
+          sudo dmesg | grep --ignore-case --extended-regexp 'out of memory|killed process' || true
+          sudo find /home/runner /opt -maxdepth 5 -path '*_diag*' -name 'Worker_*.log' 2>/dev/null |
+            xargs --no-run-if-empty sudo grep --no-filename --ignore-case --extended-regexp 'cancel|shutdown' |
+            grep --invert-match 'Force kill process on cancellation' |
+            awk 'match($0, /^\[[A-Za-z0-9 :.-]*\]/) {
+                print substr($0, RSTART, RLENGTH), (tolower($0) ~ /shutdown/ ? "shutdown" : "cancel") }' |
+            tail -n 20 || true
+
+      # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
+      - if: always()
+        run: sudo tailscale logout
+
+  # "Re-run failed jobs" reuses this job's output, whose user cleanup already removed. Only "Re-run all jobs" works.
+  tailnet:
+    runs-on: ubuntu-24.04
+    environment: headscale
+    outputs:
+      bundle: ${{ steps.setup.outputs.bundle }}
+      slots: ${{ steps.slots.outputs.slots }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The bundle is ciphertext only. GitHub drops a job output that contains a masked value.
+      - id: setup
+        run: |
+          bundle=$(ci/headscale.sh setup "$RUN_NAME")
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+        env:
+          HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+          HEADSCALE_API_KEY: ${{ secrets.HEADSCALE_API_KEY }}
+          CI_PASSPHRASE: ${{ secrets.CI_PASSPHRASE }}
+
+      # The test matrix, one slot per node.
+      - id: slots
+        run: |
+          echo "slots=$(jq --compact-output --null-input --argjson n "$NODES" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+        env:
+          NODES: ${{ inputs.nodes }}
+
+  # The user name comes from the run, not from tailnet's output, so a tailnet job that failed midway is cleaned up too.
+  cleanup:
+    needs: [tailnet, test]
+    if: always()
+    runs-on: ubuntu-24.04
+    environment: headscale
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: ci/headscale.sh cleanup "$RUN_NAME"
+        env:
+          HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+          HEADSCALE_API_KEY: ${{ secrets.HEADSCALE_API_KEY }}

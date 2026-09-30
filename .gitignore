@@ -2,3 +2,4 @@
 .terraform/
 *.tfvars
 image/output/
+__pycache__/
