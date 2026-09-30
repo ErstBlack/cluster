@@ -1,9 +1,12 @@
 # Removes the Headscale users of runs that died before their cleanup job ran.
 name: janitor
 
+# ci/systemd/cluster-janitor.timer dispatches it hourly, since GitHub's schedule started late or not at all. The
+# schedule stays as a backup, so leftover users are still removed while rocky-runner is down. Off the hour, which is
+# GitHub's busiest time for schedules.
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       hours:
@@ -25,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # A scheduled run has no inputs.
+      # A scheduled run has no inputs. A dispatch without inputs gets the default 3.
       - run: ci/headscale.sh janitor "${HOURS:-3}"
         env:
           HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
