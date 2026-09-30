@@ -25,37 +25,7 @@ concurrency:
 jobs:
   # Builds the image once on a cache miss, so the test slots never build it in parallel.
   image:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      key: ${{ steps.key.outputs.key }}
-    steps:
-      - uses: actions/checkout@v7
-
-      # hashFiles is not available in job outputs, so a step records the key.
-      - id: key
-        run: echo "key=rocky-rke2-airgap-${{ hashFiles('image/*') }}" >> "$GITHUB_OUTPUT"
-
-      # The airgap- prefix keeps pre-airgap entries from being restored.
-      - id: cache
-        uses: actions/cache/restore@v6
-        with:
-          path: image/output/rocky-rke2.qcow2
-          key: ${{ steps.key.outputs.key }}
-          lookup-only: true
-
-      # airgap.sh fetches into a fixed path under /srv, which the runner user cannot create.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          sudo install -d -o "$USER" /srv/rocky-cluster/images/agent-images
-          image/build.sh
-
-      - id: save
-        if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: image/output/rocky-rke2.qcow2
-          key: ${{ steps.key.outputs.key }}
+    uses: ./.github/workflows/image.yml
 
   # The rows of ci/cases.json that match the inputs, split by lane.
   cases:
@@ -89,7 +59,7 @@ jobs:
         include: ${{ fromJSON(needs.cases.outputs.lane_a) }}
     uses: ./.github/workflows/cluster.yml
     secrets: inherit
-    with:
+    with: &with
       id: ${{ matrix.id }}
       nodes: ${{ matrix.nodes }}
       control_plane_count: ${{ matrix.control_plane_count }}
@@ -110,12 +80,4 @@ jobs:
         include: ${{ fromJSON(needs.cases.outputs.lane_b) }}
     uses: ./.github/workflows/cluster.yml
     secrets: inherit
-    with:
-      id: ${{ matrix.id }}
-      nodes: ${{ matrix.nodes }}
-      control_plane_count: ${{ matrix.control_plane_count }}
-      case: ${{ matrix.case }}
-      test: ${{ matrix.test }}
-      expect_nodes: ${{ matrix.expect_nodes }}
-      expect_servers: ${{ matrix.expect_servers }}
-      image_key: ${{ needs.image.outputs.key }}
+    with: *with

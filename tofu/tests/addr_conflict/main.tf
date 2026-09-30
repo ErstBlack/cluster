@@ -10,16 +10,8 @@ resource "terraform_data" "addr_conflict" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T addr_conflict: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh addr_conflict ${var.vip}
       log "checking every node's InternalIP and node-addr journal, via ${var.vip}"
-      node_ssh() {
-        local host=$1
-        shift
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@$host" "$@"
-      }
-      vip=${var.vip}
       net=$${vip%.*}
       ips=$(node_ssh "$vip" 'sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes \
         -o jsonpath="{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}"')

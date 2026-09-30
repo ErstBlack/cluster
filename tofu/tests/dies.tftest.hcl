@@ -27,19 +27,11 @@ run "cluster_ready" {
 }
 
 run "dropped_peer" {
-
   module {
-
     source = "./tests/dropped_peer"
-
   }
-
-
 
   variables {
-
     vip = run.apply.vip
-
   }
-
 }

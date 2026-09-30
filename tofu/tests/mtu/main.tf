@@ -14,13 +14,8 @@ resource "terraform_data" "mtu" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T mtu: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh mtu ${var.vip}
       log "checking the site NIC's MTU and a ${var.mtu}-byte ping to every peer, from ${var.vip}"
-      vip_ssh() {
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@${var.vip}" "$@"
-      }
       links=$(vip_ssh ip -o link show) || { echo "ip -o link show over ssh to ${var.vip} failed" >&2; exit 1; }
       # tofu test hides provisioner output on success, so CI also gets the links in the job summary.
       printf '```\n%s\n```\n' "$links" | tee -a "$${GITHUB_STEP_SUMMARY:-/dev/null}"

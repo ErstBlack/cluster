@@ -2,9 +2,6 @@
 # var.servers are control-plane nodes, all nodes are Ready with no InternalIP shared by two nodes, and keepalived
 # serves the RKE2 supervisor on var.vip. The counts prove every node joined one cluster in the role it was elected to.
 # A non-zero exit after 30 minutes fails the tofu test run.
-# Every helper under tests/ also writes its output, one progress line per poll included, to $TEST_LOG when it is set,
-# because tofu test hides provisioner output. Locally, `TEST_LOG=/tmp/tofu-test.log just tofu test ...` with
-# `tail -f /tmp/tofu-test.log` in another shell shows it live.
 variable "vip" {
   type = string
 }
@@ -21,14 +18,12 @@ resource "terraform_data" "ready" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T ready: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh ready ${var.vip}
       log "waiting for ${var.nodes} nodes, ${var.servers} of them control-plane, behind ${var.vip}"
       # Prints what the server holding var.vip sees, and succeeds once the cluster is ready. kubectl's errors are
       # dropped because the printed counts already say what is missing.
       ssh_ok() {
-        timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@${var.vip}" \
+        ssh_timeout=60 vip_ssh \
           'k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
            hostname | grep -qx "node-[0-9a-f]\{10\}" && named=yes || named=no
            nodes=$($k get nodes -o name 2>/dev/null | wc -l)

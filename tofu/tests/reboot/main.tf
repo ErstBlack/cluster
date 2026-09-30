@@ -9,15 +9,8 @@ resource "terraform_data" "reboot" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      [ -z "$${TEST_LOG:-}" ] || exec > >(tee -a "$TEST_LOG") 2>&1
-      log() { printf '%(%H:%M:%S)T reboot: %s\n' -1 "$*"; }
+      source ${path.module}/../lib.sh reboot ${var.vip}
       log "picking an agent and a server that does not hold ${var.vip}"
-      node_ssh() {
-        local host=$1
-        shift
-        timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR "rocky@$host" "$@"
-      }
       k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
       # Prints "<kubelet boot ID> <Ready status> <InternalIP>" of node $1.
       info() {

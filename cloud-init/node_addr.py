@@ -121,11 +121,6 @@ def assign(iface, ip, prefix, gateway, dns):
     return True
 
 
-def restore():
-    """Bring up the profile a previous boot saved. False if there is none or activation fails."""
-    return nmcli("con", "up", PROFILE).returncode == 0
-
-
 def main():
     env = os.environ
     vip = ipaddress.ip_interface(env["VIP"])
@@ -150,10 +145,11 @@ def main():
             print(e, flush=True)
             time.sleep(INTERVAL)
             continue
-        # A profile a previous boot saved keeps its address. Only a failed activation derives a new one.
+        # A profile a previous boot saved keeps its address. Only a failed activation, or no saved profile, derives a
+        # new one.
         if saved:
             saved = False
-            if restore():
+            if nmcli("con", "up", PROFILE).returncode == 0:
                 continue
         ip = candidate(machine_id, attempt, vip.network, exclude)
         attempt += 1
