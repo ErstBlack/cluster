@@ -50,7 +50,8 @@ diagnose() {
     echo "<details><summary>State after: $1</summary>"
     echo
     echo '```'
-    k get pods -A -o wide 2>&1 | grep -v -E ' Running | Completed ' | head -n 40 || :
+    k get pods -A -o wide 2>&1 | grep -v -E ' Running | Completed |^default ' | head -n 40 || :
+    echo "SELinux denials since prep: $(avc 2>&1 || :)"
     k get events -A --field-selector type=Warning --sort-by=.lastTimestamp 2>&1 | tail -n 25 | cut -c 1-300 || :
     if [[ $candidate == linstor ]]; then
       k -n "$ns" logs -l app.kubernetes.io/component=linstor-satellite -c drbd-module-loader --tail=15 2>&1 | head -n 40 || :
@@ -212,8 +213,10 @@ install_rook-ceph() {
     "$s/controller-publish-secret-name=rook-csi-cephfs-provisioner" "$s/controller-publish-secret-namespace=rook-ceph"
     "$s/node-stage-secret-name=rook-csi-cephfs-node" "$s/node-stage-secret-namespace=rook-ceph")
   {
-    # operator.yaml holds CSI operator resources whose CRDs csi-operator.yaml only just created.
-    curl -fsSL "$ex/operator.yaml"
+    # operator.yaml holds CSI operator resources whose CRDs csi-operator.yaml only just created. Its own setting for
+    # SELinux hosts runs the pods that mount a host path privileged: unprivileged, the mons' chown-container-data-dir
+    # init container crash-looped on Rocky (run 36896488915).
+    curl -fsSL "$ex/operator.yaml" | sed '/name: ROOK_HOSTPATH_REQUIRES_PRIVILEGED/{n;s/"false"/"true"/}'
     echo "---"
     # From deploy/examples/cluster.yaml: AES CSI keys, since Rocky 10's kernel predates 7.0. One mgr, no dashboard.
     cat <<EOF
@@ -448,7 +451,7 @@ EOF
 avc() {
   local name out
   for name in "${!ip_of[@]}"; do
-    out=$(node_ssh "${ip_of[$name]}" sudo bash -s -- "$since" <<'EOF'
+    out=$(node_ssh "${ip_of[$name]}" sudo bash -s -- "${since:-0}" <<'EOF'
 awk -v t="$1" 'match($0, /audit\(([0-9]+)/, m) && m[1] >= t && /avc: +denied/' /var/log/audit/audit.log |
   grep -o 'comm="[^"]*"' | sort | uniq -c | sort -rn | head -n 5 | awk '{printf "%s%s x%s", s, $2, $1; s = ", "}'
 EOF
@@ -473,7 +476,8 @@ selinux=$(node_ssh "${ip_of[$me]}" getenforce)
 sb=$(node_ssh "${ip_of[$me]}" 'od -An -tu1 /sys/firmware/efi/efivars/SecureBoot-* | awk "{print \$NF}"')
 note "Nodes: 4 vCPU, ${TF_VAR_memory_mib:-4096} MiB, a ${TF_VAR_data_disk_gib:-0} GiB data disk (vdb, qcow2 with \
 cache=unsafe on the runner's disk), Secure Boot $([[ $sb == 1 ]] && echo on || echo off), SELinux $selinux. \
-KubeVirt $kubevirt_v with software emulation. Upstream manifests and defaults."
+KubeVirt $kubevirt_v with software emulation. Upstream manifests and defaults$([[ $candidate == rook-ceph ]] &&
+  echo ", except ROOK_HOSTPATH_REQUIRES_PRIVILEGED=true, operator.yaml's setting for SELinux hosts")."
 
 # Preparation, untimed.
 log "preparing every node"
