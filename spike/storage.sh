@@ -609,12 +609,10 @@ done'
   on_victim=$(k -n "$ns" get pods --field-selector "spec.nodeName=$victim" --no-headers -o custom-columns=N:.metadata.name |
     sed -E 's/-[bcdfghjklmnpqrstvwxz2456789]{6,10}-[bcdfghjklmnpqrstvwxz2456789]{5}$//
       s/-[bcdfghjklmnpqrstvwxz2456789]{5}$//' | sort -u | paste -sd , | sed 's/,/, /g')
-  # The victim's writer is a Deployment, so it is recreated on another node. Only the victim is schedulable while it
-  # starts. It tolerates a not-ready or unreachable node for 10 s instead of 300 s, so the time measured is the
+  # The victim's writer is a Deployment, so it is recreated on another node. It prefers the victim, rather than having
+  # the other nodes cordoned, since Longhorn places no replica on a cordoned node and its volume then lived only on the
+  # victim. It tolerates a not-ready or unreachable node for 10 s instead of 300 s, so the time measured is the
   # storage's rather than the eviction's.
-  for name in "${!ip_of[@]}"; do
-    [[ $name == "$victim" ]] || k cordon "$name" >/dev/null
-  done
   {
     pvc fo-victim spike-r3 1Gi ReadWriteOnce
     cat <<EOF
@@ -631,22 +629,52 @@ spec:
     metadata:
       labels: {app: fo-victim}
     spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - {key: kubernetes.io/hostname, operator: In, values: [$victim]}
       tolerations:
         - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 10}
         - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 10}
 $(restart=Always pod_spec fo-victim "$writer" | sed 's/^/      /')
 EOF
   } | k apply -f - >/dev/null
+  # Up to 3 tries for the writer to start on the victim. A pod elsewhere is deleted, and the Deployment makes another.
+  local tries=0 on vpv vreps="" ok=""
   SECONDS=0
-  until k logs deploy/fo-victim 2>/dev/null | grep -q '^W'; do
-    if ((SECONDS > 600)); then
-      for name in "${!ip_of[@]}"; do k uncordon "$name" >/dev/null; done
-      failed "Storage node killed" "the killed node's writer did not start in 10 min"
-      return
+  while ((tries < 3 && SECONDS < 600)); do
+    if k logs deploy/fo-victim 2>/dev/null | grep -q '^W'; then
+      on=$(k get pods -l app=fo-victim --field-selector status.phase=Running -o jsonpath='{.items[0].spec.nodeName}')
+      [[ $on != "$victim" ]] || { ok=1; break; }
+      tries=$((tries + 1))
+      log "fo-victim started on $on, not $victim: deleting it (try $tries of 3)"
+      k delete pod -l app=fo-victim --wait=true >/dev/null
     fi
     sleep 3
   done
-  for name in "${!ip_of[@]}"; do k uncordon "$name" >/dev/null; done
+  [[ -n $ok ]] || { failed "Storage node killed" "the killed node's writer did not start on slot ${slot_of[$victim]}"; return; }
+  # Its volume must have 3 healthy replicas on 3 nodes before the kill.
+  vpv=$(k get pvc fo-victim -o jsonpath='{.spec.volumeName}')
+  SECONDS=0
+  until [[ -n $vreps ]]; do
+    if healthy3 "$vpv"; then
+      # Node names hold no spaces.
+      # shellcheck disable=SC2046
+      if [[ $candidate == rook-ceph ]]; then
+        vreps="the killed node's volume wrote to objects on the OSDs of slots $(slots $(ceph_active_hosts "$vpv"))"
+      elif (($(replica_nodes "$vpv" | sort -u | wc -l) == 3)); then
+        # shellcheck disable=SC2046
+        vreps="the killed node's volume has replicas on slots $(slots $(replica_nodes "$vpv"))"
+      fi
+    fi
+    if [[ -z $vreps ]]; then
+      ((SECONDS < 300)) || { failed "Storage node killed" "the killed node's volume had not 3 healthy replicas on 3 nodes in 5 min"; return; }
+      sleep 5
+    fi
+  done
   # The node's clock minus this runner's, to place the survivor's write times.
   off=$(awk -v r="$EPOCHREALTIME" -v n="$(node_ssh "${ip_of[$me]}" date +%s.%N)" 'BEGIN {printf "%.3f", n - r}')
   log "powering off $victim (slot ${slot_of[$victim]})"
@@ -686,7 +714,8 @@ documents the taint as an admin's step once the node is confirmed down, and ship
   fi
   metric survivor_gap_s "$gap"
   metric survivor_writes "$writes"
-  io="Slot 1's 3-replica volume: $writes writes from 5 s before the kill to 180 s after, longest gap ${gap} s ($where_reps)."
+  io="Slot 1's 3-replica volume: $writes writes from 5 s before the kill to 180 s after, longest gap ${gap} s ($where_reps;
+$vreps)."
   local head="Storage node killed (slot ${slot_of[$victim]}, ran: ${on_victim:-no pod of the candidate})"
   if [[ -n $back ]]; then
     metric kill_back_s "$(awk -v a="$t_kill" -v b="$back" 'BEGIN {printf "%.0f", b - a}')"
