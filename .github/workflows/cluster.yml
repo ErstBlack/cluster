@@ -42,6 +42,10 @@ on:
         description: For the storage spike (#91), route each node to the internet through its runner and report the runner's disk.
         type: boolean
         default: false
+      debs_key:
+        description: The cache key of the Install libvirt step's .debs, which spike-storage.yml's debs job saves. Empty uses the mirror.
+        type: string
+        default: ""
 
 env:
   # The Headscale user, and with -<slot> each runner's tailnet hostname. Lowercase, digits and hyphens.
@@ -115,16 +119,40 @@ jobs:
           done
           exit 1
 
+      - id: debs
+        if: inputs.debs_key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: debs
+          key: ${{ inputs.debs_key }}
+
       # nftables counts the pings of ci/overlay.sh preflight.
+      # A cache hit installs the cached .debs and makes no mirror call. A miss, or a failed install, uses the mirror.
       - name: Install libvirt
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libvirt-daemon-system qemu-system-x86 qemu-utils ovmf dnsmasq-base nftables
+          SECONDS=0
+          # dpkg, since apt without package lists rejects a set of local .debs whose dependencies are among them.
+          from=mirror
+          if [[ $DEBS_HIT == true ]] &&
+            sudo DEBIAN_FRONTEND=noninteractive dpkg --install --skip-same-version debs/*.deb; then
+            from="cached .debs"
+          else
+            sudo apt-get update
+            sudo apt-get install -y libvirt-daemon-system qemu-system-x86 qemu-utils ovmf dnsmasq-base nftables
+          fi
+          if [[ -n $DEBS_KEY ]]; then
+            echo "Install libvirt, slot $SLOT: ${SECONDS} s from the $from (cache hit: ${DEBS_HIT:-false})" |
+              tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           # virt-aa-helper leaves the backing image of a type='volume' disk out of the VM's AppArmor profile, so qemu
           # gets "Permission denied" on the base volume (DAC ruled out). The runner is discarded, so run without it.
           echo 'security_driver = "none"' | sudo tee -a /etc/libvirt/qemu.conf
           sudo systemctl restart libvirtd
           sudo setfacl -m "u:$USER:rw" /var/run/libvirt/libvirt-sock
+        env:
+          DEBS_HIT: ${{ steps.debs.outputs.cache-hit }}
+          DEBS_KEY: ${{ inputs.debs_key }}
+          SLOT: ${{ matrix.slot }}
 
       # tofu/main.tf selects Secure Boot firmware with Microsoft keys enrolled. Fail here if ovmf ships no such descriptor.
       - name: Check OVMF enrolled-keys descriptor

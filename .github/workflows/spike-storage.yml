@@ -31,6 +31,45 @@ jobs:
   image:
     uses: ./.github/workflows/image.yml
 
+  # The .debs of cluster.yml's Install libvirt step, with every dependency the runner image lacks, downloaded once
+  # into the cache. The Ubuntu mirror served some runners at 79 kB/s, so their slots missed preflight (run
+  # 36890732575). The runner image decides which dependencies are missing, so it is in the key. PACKAGES must match
+  # that step's list. A slot whose install from the cache fails uses the mirror.
+  debs:
+    runs-on: ubuntu-24.04
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    env:
+      PACKAGES: libvirt-daemon-system qemu-system-x86 qemu-utils ovmf dnsmasq-base nftables
+    steps:
+      - id: key
+        run: echo "key=libvirt-debs-$ImageOS-$ImageVersion-$(sha256sum <<<"$PACKAGES" | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+      - id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: debs
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p debs/partial
+          SECONDS=0
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install --download-only -y -o Dir::Cache::archives="$PWD/debs" $PACKAGES
+          sudo rm -rf debs/partial debs/lock
+          sudo chown -R "$USER" debs
+          debs=(debs/*.deb)
+          echo "downloaded ${#debs[@]} .debs in ${SECONDS} s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: debs
+          key: ${{ steps.key.outputs.key }}
+
   # One row per candidate. Every node gets 12 GiB and a 30 GiB data disk. LINSTOR's DRBD module is built at boot and
   # unsigned, so its nodes boot without Secure Boot.
   candidates:
@@ -55,7 +94,7 @@ jobs:
           NODES: ${{ inputs.nodes || 3 }}
 
   spike:
-    needs: [image, candidates]
+    needs: [image, debs, candidates]
     name: ${{ matrix.id }}
     strategy:
       fail-fast: false
@@ -74,3 +113,4 @@ jobs:
       image_key: ${{ needs.image.outputs.key }}
       tf_vars: ${{ toJSON(matrix.tf_vars) }}
       spike: true
+      debs_key: ${{ needs.debs.outputs.key }}
