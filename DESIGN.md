@@ -36,7 +36,7 @@ The system turns independent machines at an edge site into one cluster that runs
 
 ## Cluster formation
 
-- The nodes elect roles among themselves. Up to 3 become control-plane nodes, and one of those bootstraps the cluster.
+- The nodes elect roles among themselves. Up to 3 become control-plane nodes, and one of those bootstraps the cluster. If the bootstrap node dies before another server has joined, the others elect again without it.
 - Control-plane nodes also run workloads. A fixed share of their CPU and RAM is reserved for the control plane and the system. At large sites, an operator can dedicate some nodes to control-plane work only.
 - The control plane is fixed at formation. Nodes that arrive later join as workers. A lost control-plane node is not replaced, and losing the control plane ends the run. A repair mechanism may be added later.
 

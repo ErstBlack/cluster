@@ -38,6 +38,13 @@ class ConfigYaml(unittest.TestCase):
         self.assertTrue(line.startswith("token: "))
         self.assertEqual(json.loads(line[len("token: ") :]), token)
 
+    def test_each_epoch_has_its_own_join_token(self):
+        token = lambda epoch: config_yaml(ENV, "agent", False, epoch).splitlines()[0]
+        self.assertEqual(token(0), 'token: "secret"')
+        self.assertEqual(token(1), token(1))
+        self.assertEqual(len({token(0), token(1), token(2)}), 3)
+        self.assertNotIn("secret", token(1))
+
 
 class KeepalivedConf(unittest.TestCase):
     def test_holds_the_vip_on_the_interface_and_tracks_the_check(self):
@@ -63,6 +70,9 @@ class Main(unittest.TestCase):
         self.state = os.path.join(d.name, "elect.json")
         self.config = os.path.join(d.name, "rke2", "config.yaml")
         self.keepalived = os.path.join(d.name, "keepalived", "keepalived.conf")
+        self.epoch = os.path.join(d.name, "rke2", "epoch")
+        self.data = os.path.join(d.name, "data")
+        self.password = os.path.join(d.name, "node", "password")
         self.vip_up = mock.Mock(return_value=True)
         self.write = mock.Mock(side_effect=rke2_elect.write)
         self.run_ = mock.Mock()
@@ -70,6 +80,9 @@ class Main(unittest.TestCase):
             ("STATE", self.state),
             ("CONFIG", self.config),
             ("KEEPALIVED", self.keepalived),
+            ("EPOCH", self.epoch),
+            ("DATA", self.data),
+            ("NODE_PASSWORD", self.password),
             ("vip_up", self.vip_up),
             ("write", self.write),
         ):
@@ -89,7 +102,7 @@ class Main(unittest.TestCase):
     def main(self, state):
         if state is not None:
             with open(self.state, "w") as f:
-                json.dump(state, f)
+                json.dump({"epoch": 0, **state}, f)
         rke2_configure.main()
 
     def assert_started(self, role):
@@ -129,7 +142,7 @@ class Main(unittest.TestCase):
         self.main({"role": "server", "bootstrap": False})
         self.assertEqual(
             [c.args[0] for c in self.write.call_args_list],
-            [self.keepalived, self.config],
+            [self.keepalived, self.epoch, self.config],
         )
         with open(self.keepalived) as f:
             self.assertEqual(f.read(), keepalived_conf("192.168.150.10", "eth1"))
@@ -137,7 +150,9 @@ class Main(unittest.TestCase):
 
     def test_agent_writes_no_keepalived(self):
         self.main({"role": "agent", "bootstrap": False})
-        self.assertEqual([c.args[0] for c in self.write.call_args_list], [self.config])
+        self.assertEqual(
+            [c.args[0] for c in self.write.call_args_list], [self.epoch, self.config]
+        )
         self.assertFalse(os.path.exists(self.keepalived))
         self.assert_started("agent")
 
@@ -152,6 +167,61 @@ class Main(unittest.TestCase):
                 with open(self.config) as f:
                     self.assertEqual(f.read(), "old\n")
                 self.assert_started(role)
+
+    def old_epoch(self):
+        """A server's files from epoch 0: removed by a reset, and kept by it."""
+        removed = [
+            "server/db/etcd/member",
+            "agent/pod-manifests/etcd.yaml",
+            "agent/etc/rke2-agent-load-balancer.json",
+            "agent/client-kubelet.crt",
+            "agent/client-kubelet.key",
+            "agent/kubelet.kubeconfig",
+        ]
+        kept = [
+            "agent/containerd/io.containerd.metadata.v1.bolt/meta.db",
+            "data/v1/bin/rke2",
+        ]
+        removed = [os.path.join(self.data, p) for p in removed]
+        removed += [self.password, self.keepalived, self.config]
+        kept = [os.path.join(self.data, p) for p in kept]
+        for path in (*removed, *kept):
+            rke2_elect.write(path, "old\n")
+        rke2_elect.write(self.epoch, "0")
+        return removed, kept
+
+    def test_same_epoch_does_not_reset(self):
+        removed, kept = self.old_epoch()
+        self.main({"role": "server", "bootstrap": False})
+        self.assertTrue(all(os.path.exists(p) for p in (*removed, *kept)))
+        self.assert_started("server")
+
+    def test_new_epoch_resets_then_takes_the_first_boot_path(self):
+        removed, kept = self.old_epoch()
+        self.main({"epoch": 1, "role": "agent", "bootstrap": False})
+        self.assertEqual(
+            [c.args[0] for c in self.run_.call_args_list],
+            [
+                [
+                    "systemctl",
+                    "disable",
+                    "--now",
+                    "keepalived",
+                    "rke2-server",
+                    "rke2-agent",
+                ],
+                ["/usr/bin/rke2-killall.sh"],
+                ["systemctl", "enable", "--now", "--no-block", "rke2-agent"],
+            ],
+        )
+        # CONFIG is written again, for the new role.
+        self.assertEqual([p for p in removed if os.path.exists(p)], [self.config])
+        self.assertTrue(all(os.path.exists(p) for p in kept))
+        self.vip_up.assert_called_once_with("192.168.150.10")
+        self.assertEqual(
+            [c.args[:2] for c in self.write.call_args_list],
+            [(self.epoch, "1"), (self.config, config_yaml(ENV, "agent", False, 1))],
+        )
 
 
 if __name__ == "__main__":
