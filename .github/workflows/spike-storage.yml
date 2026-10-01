@@ -1,5 +1,5 @@
-# The storage spike (#91), never merged. Forms one cluster per candidate through cluster.yml, one after another, and
-# slot 1 runs spike/storage.sh, which writes the measurements to that slot's job summary.
+# The storage spike (#91), never merged. Forms one cluster per candidate through cluster.yml, all at once, and slot 1
+# of each runs spike/storage.sh, which writes the measurements to that slot's job summary.
 # workflow_dispatch only lists workflows on the default branch, so the push trigger runs it once with the defaults and
 # registers it. After that, `gh workflow run spike-storage.yml --ref spike/storage -f candidates=... -f nodes=...`.
 name: spike-storage
@@ -10,17 +10,19 @@ on:
   workflow_dispatch:
     inputs:
       candidates:
-        description: Space-separated, run in this order. linstor, rook-ceph, longhorn.
+        description: Space-separated linstor, rook-ceph, longhorn, each optionally :<nodes> (rook-ceph:3).
         type: string
         default: longhorn
       nodes:
-        description: Nodes per cluster, 3 to 7.
+        description: Nodes per cluster without a :<nodes>, 3 to 6.
         type: number
         default: 3
 
 permissions:
   contents: read
 
+# One dispatch at a time. cluster.yml's tailnet job ends before its slots start, so a cluster peaks at one runner per
+# node, and three 6-node clusters at 18 of the 20 shared runners.
 concurrency:
   group: spike-storage
   cancel-in-progress: false
@@ -38,12 +40,16 @@ jobs:
     steps:
       - id: rows
         run: |
-          echo "rows=$(jq --compact-output --null-input --arg c "$CANDIDATES" --argjson n "$NODES" '
-            [$c | splits(" +") | select(. != "")
-              | if IN("linstor", "rook-ceph", "longhorn") then . else error("unknown candidate \(.)") end | {
-              id: "storage-\(.)-\($n)", candidate: ., nodes: $n,
-              tf_vars: ({candidate: ., memory_mib: 12288, data_disk_gib: 30}
-                + (if . == "linstor" then {secure_boot: false} else {} end))}]')" >> "$GITHUB_OUTPUT"
+          # The assignment fails the step on a bad candidate. An argument's command substitution would not.
+          rows=$(jq --compact-output --null-input --arg c "$CANDIDATES" --argjson n "$NODES" '
+            [$c | splits(" +") | select(. != "") | split(":") | {c: .[0], n: (.[1] // $n | tonumber)}
+              | if (.c | IN("linstor", "rook-ceph", "longhorn")) | not then error("unknown candidate \(.c)")
+                elif .n < 3 or .n > 6 or .n != (.n | floor) then error("\(.c): nodes must be 3 to 6")
+                else . end
+              | {id: "storage-\(.c)-\(.n)", candidate: .c, nodes: .n,
+                 tf_vars: ({candidate: .c, memory_mib: 12288, data_disk_gib: 30}
+                   + (if .c == "linstor" then {secure_boot: false} else {} end))}]')
+          echo "rows=$rows" >> "$GITHUB_OUTPUT"
         env:
           CANDIDATES: ${{ inputs.candidates || 'longhorn' }}
           NODES: ${{ inputs.nodes || 3 }}
@@ -52,7 +58,6 @@ jobs:
     needs: [image, candidates]
     name: ${{ matrix.id }}
     strategy:
-      max-parallel: 1
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.candidates.outputs.rows) }}
