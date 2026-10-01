@@ -23,7 +23,18 @@ case $candidate in
   linstor) pkgs+=("kernel-devel-$(uname -r)") ;;
 esac
 SECONDS=0
-dnf --assumeyes --quiet install "${pkgs[@]}"
+# A mirror behind the release lacks the running kernel's kernel-devel (run 36932898763), so a failure retries on
+# Rocky's own server.
+if ! dnf --assumeyes --quiet install "${pkgs[@]}"; then
+  echo "slot $slot: retrying dnf on dl.rockylinux.org"
+  # dnf expands $releasever and $basearch.
+  # shellcheck disable=SC2016
+  dnf --assumeyes --quiet \
+    --setopt=baseos.mirrorlist= --setopt='baseos.baseurl=https://dl.rockylinux.org/pub/rocky/$releasever/BaseOS/$basearch/os/' \
+    --setopt=appstream.mirrorlist= \
+    --setopt='appstream.baseurl=https://dl.rockylinux.org/pub/rocky/$releasever/AppStream/$basearch/os/' \
+    install "${pkgs[@]}"
+fi
 echo "slot $slot: installed ${pkgs[*]} in ${SECONDS}s"
 
 case $candidate in

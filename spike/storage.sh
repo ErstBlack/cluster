@@ -350,13 +350,26 @@ fetch_rook-ceph() {
       s/^      enableSeLinuxHostMount: false$/      enableSeLinuxHostMount: true/' |
     awk '/name: rook-ceph.rbd.csi.ceph.com/ {rbd = 1} {print} rbd && /^spec:$/ {print "  enableFencing: true"; rbd = 0}' \
       >"$work/m/operator.yaml"
-  # The upstream example CephCluster, dashboard off.
-  curl -fsSL "$ex/cluster.yaml" | sed '/^  dashboard:$/,/enabled:/ s/enabled: true/enabled: false/' >"$work/m/cluster.yaml"
+  # The upstream example CephCluster, dashboard off. Its keys with no value (csi.cephfs, resources and others) go, as
+  # kubectl create drops them: server-side apply rejected "spec.csi.cephfs ... must be of type object" (run 36932898763).
+  curl -fsSL "$ex/cluster.yaml" | sed '/^  dashboard:$/,/enabled:/ s/enabled: true/enabled: false/' | awk '
+    {line[NR] = $0}
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (line[i] ~ /^ *[A-Za-z0-9_.-]+: *(#.*)?$/) {
+          ind = match(line[i], /[^ ]/)
+          for (j = i + 1; j <= NR && line[j] ~ /^ *(#.*)?$/; j++) {}
+          if (j > NR || match(line[j], /[^ ]/) <= ind && line[j] !~ /^ *- /) continue
+        }
+        print line[i]
+      }
+    }' >"$work/m/cluster.yaml"
   grep -A1 'name: ROOK_HOSTPATH_REQUIRES_PRIVILEGED' "$work/m/operator.yaml" | grep -q '"true"' &&
     grep -q '^    deployCsiAddons: true$' "$work/m/operator.yaml" &&
     grep -q '^      enableSeLinuxHostMount: true$' "$work/m/operator.yaml" &&
     grep -q '^  enableFencing: true$' "$work/m/operator.yaml" &&
     grep -A1 '^  dashboard:$' "$work/m/cluster.yaml" | grep -q 'enabled: false' &&
+    ! grep -q '^    cephfs:$' "$work/m/cluster.yaml" &&
     grep -q "image: $ceph_image\$" "$work/m/cluster.yaml"
 }
 
@@ -701,6 +714,8 @@ attach_diag() {
         k -n longhorn-system get volumes.longhorn.io "$1" \
           -o jsonpath='{.status.state} {.status.robustness} on {.status.currentNodeID}{"\n"}' 2>&1 || :
         k -n longhorn-system get volumeattachments.longhorn.io "$1" -o jsonpath='{.spec}{"\n"}{.status}{"\n"}' 2>&1 || :
+        k -n longhorn-system get replicas.longhorn.io -l "longhornvolume=$1" -o jsonpath='{range .items[*]}{.spec.nodeID} \
+{.status.currentState} healthyAt={.spec.healthyAt} failedAt={.spec.failedAt}{"\n"}{end}' 2>&1 || :
         ;;
       linstor) linstor resource list --resources "$1" 2>&1 || : ;;
     esac
@@ -759,7 +774,7 @@ fi
 ((rc == 0)) || { echo "ausearch failed: $(head -c 200 /tmp/ausearch.err)"; exit 3; }
 denied=$(grep 'avc: *denied' <<<"$out" || :)
 [[ -n $denied ]] || { echo "0 none"; exit 0; }
-echo "$(wc -l <<<"$denied") $(grep -o 'comm="[^"]*"' <<<"$denied" | sort | uniq -c | sort -rn |
+echo "$(wc -l <<<"$denied") $(sed -nE 's/.*(comm|exe)="([^"]*)".*/\2/p' <<<"$denied" | sort | uniq -c | sort -rn |
   awk 'NR <= 5 {printf "%s%s x%s", s, $2, $1; s = ", "}')"
 EOF
     ); then
@@ -1064,6 +1079,12 @@ k delete pod rwx-a rwx-b --wait=false >/dev/null
 
 if [[ -n $kubevirt ]]; then
   log "KubeVirt live migration"
+  cpu_model=$(k get nodes -o json | jq --raw-output '
+    [.items[] | [.metadata.labels | to_entries[] | select(.value == "true" and (.key | startswith("cpu-model.node.kubevirt.io/")))
+      | .key | sub(".*/"; "")]]
+    | reduce .[1:][] as $n (.[0]; map(select(. as $m | $n | index($m))))
+    | (map(select(IN("Westmere", "Nehalem", "SandyBridge", "Opteron_G3", "EPYC"))) + .) | .[0] // empty')
+  note "KubeVirt VM CPU model: ${cpu_model:-host-model, as no named model is usable on every node}."
   {
     pvc vm-disk spike-block 1Gi ReadWriteMany Block
     cat <<EOF
@@ -1080,6 +1101,7 @@ spec:
       disks:
         - {name: boot, disk: {bus: virtio}}
         - {name: data, disk: {bus: virtio}}
+    cpu: {model: ${cpu_model:-host-model}}
     resources:
       requests:
         memory: 256Mi
