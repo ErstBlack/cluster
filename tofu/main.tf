@@ -116,6 +116,15 @@ resource "libvirt_volume" "disk" {
   }
 }
 
+resource "libvirt_volume" "data" {
+  for_each = var.data_disk_gib > 0 ? local.nodes : {}
+
+  name     = "${each.value.hostname}-data.qcow2"
+  pool     = libvirt_pool.cluster.name
+  capacity = var.data_disk_gib * 1024 * 1024 * 1024
+  target   = { format = { type = "qcow2" } }
+}
+
 # One seed for every node. Each node sets its own hostname and assigns its own address at boot.
 # On the libvirt network the host's .1 is the gateway and DNS. On a bridge there is neither, and nodes route
 # on-link. Nodes need nothing outside the cluster, since the image is airgapped (#60).
@@ -171,14 +180,15 @@ resource "libvirt_domain" "node" {
     # Order matches libvirt's read-back.
     firmware_info = {
       features = [
-        { name = "enrolled-keys", enabled = "yes" },
-        { name = "secure-boot", enabled = "yes" },
+        { name = "enrolled-keys", enabled = var.secure_boot ? "yes" : "no" },
+        { name = "secure-boot", enabled = var.secure_boot ? "yes" : "no" },
       ]
     }
   }
 
   devices = {
-    disks = [
+    # The data disk is null, and left out, unless var.data_disk_gib is set.
+    disks = [for d in [
       {
         source = { volume = { pool = libvirt_pool.cluster.name, volume = libvirt_volume.disk[each.key].name } }
         target = { bus = "virtio", dev = "vda" }
@@ -195,12 +205,24 @@ resource "libvirt_domain" "node" {
           queues       = var.vcpu
         }
       },
+      var.data_disk_gib > 0 ? {
+        source = { volume = { pool = libvirt_pool.cluster.name, volume = libvirt_volume.data[each.key].name } }
+        target = { bus = "virtio", dev = "vdb" }
+        driver = {
+          type         = "qcow2"
+          cache        = "unsafe"
+          io_thread    = 1
+          discard      = "unmap"
+          detect_zeros = "unmap"
+          queues       = var.vcpu
+        }
+      } : null,
       {
         device = "cdrom"
         source = { volume = { pool = libvirt_pool.cluster.name, volume = libvirt_volume.seed[each.key].name } }
         target = { bus = "sata", dev = "sda" }
       },
-    ]
+    ] : d if d != null]
 
     interfaces = [{
       mac   = { address = each.value.mac }

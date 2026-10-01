@@ -45,6 +45,19 @@ variable "disk_gib" {
   default = 40
 }
 
+# A second, empty disk per node, vdb, for the storage spike (#91). 0 leaves it out.
+variable "data_disk_gib" {
+  type    = number
+  default = 0
+}
+
+# Secure Boot with Microsoft keys enrolled. The storage spike (#91) turns it off for LINSTOR, whose DRBD module is built
+# at boot and unsigned.
+variable "secure_boot" {
+  type    = bool
+  default = true
+}
+
 variable "base_image_url" {
   description = "URL or local path of the qcow2 base image. Swap for a custom build."
   type        = string

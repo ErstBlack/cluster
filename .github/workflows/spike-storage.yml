@@ -1,0 +1,71 @@
+# The storage spike (#91), never merged. Forms one cluster per candidate through cluster.yml, one after another, and
+# slot 1 runs spike/storage.sh, which writes the measurements to that slot's job summary.
+# workflow_dispatch only lists workflows on the default branch, so the push trigger runs it once with the defaults and
+# registers it. After that, `gh workflow run spike-storage.yml --ref spike/storage -f candidates=... -f nodes=...`.
+name: spike-storage
+
+on:
+  push:
+    branches: [spike/storage]
+  workflow_dispatch:
+    inputs:
+      candidates:
+        description: Space-separated, run in this order. linstor, rook-ceph, longhorn.
+        type: string
+        default: longhorn
+      nodes:
+        description: Nodes per cluster, 3 to 7.
+        type: number
+        default: 3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-storage
+  cancel-in-progress: false
+
+jobs:
+  image:
+    uses: ./.github/workflows/image.yml
+
+  # One row per candidate. Every node gets 12 GiB and a 30 GiB data disk. LINSTOR's DRBD module is built at boot and
+  # unsigned, so its nodes boot without Secure Boot.
+  candidates:
+    runs-on: ubuntu-24.04
+    outputs:
+      rows: ${{ steps.rows.outputs.rows }}
+    steps:
+      - id: rows
+        run: |
+          echo "rows=$(jq --compact-output --null-input --arg c "$CANDIDATES" --argjson n "$NODES" '
+            [$c | splits(" +") | select(. != "")
+              | if IN("linstor", "rook-ceph", "longhorn") then . else error("unknown candidate \(.)") end | {
+              id: "storage-\(.)-\($n)", candidate: ., nodes: $n,
+              tf_vars: ({candidate: ., memory_mib: 12288, data_disk_gib: 30}
+                + (if . == "linstor" then {secure_boot: false} else {} end))}]')" >> "$GITHUB_OUTPUT"
+        env:
+          CANDIDATES: ${{ inputs.candidates || 'longhorn' }}
+          NODES: ${{ inputs.nodes || 3 }}
+
+  spike:
+    needs: [image, candidates]
+    name: ${{ matrix.id }}
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.candidates.outputs.rows) }}
+    uses: ./.github/workflows/cluster.yml
+    secrets: inherit
+    with:
+      id: ${{ matrix.id }}
+      nodes: ${{ matrix.nodes }}
+      control_plane_count: 3
+      case: happy
+      test: storage
+      expect_nodes: ${{ matrix.nodes }}
+      expect_servers: 3
+      image_key: ${{ needs.image.outputs.key }}
+      tf_vars: ${{ toJSON(matrix.tf_vars) }}
+      spike: true
