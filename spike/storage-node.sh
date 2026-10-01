@@ -16,8 +16,8 @@ ip route replace default via "192.168.150.$((240 + slot))"
 rm -f /etc/resolv.conf
 printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' >/etc/resolv.conf
 
-# NFS serves Longhorn's and LINSTOR's RWX filesystems.
-pkgs=(nfs-utils)
+# NFS serves Longhorn's and LINSTOR's RWX filesystems. iperf3 measures the node network.
+pkgs=(nfs-utils iperf3)
 case $candidate in
   longhorn) pkgs+=(iscsi-initiator-utils cryptsetup) ;;
   linstor) pkgs+=("kernel-devel-$(uname -r)") ;;

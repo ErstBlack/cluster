@@ -73,7 +73,7 @@ report() {
     cat "$work/resources" 2>/dev/null || :
     echo
     cat "$work/diag" 2>/dev/null || :
-  } >>"${GITHUB_STEP_SUMMARY:-/dev/stderr}"
+  } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
 }
 trap report EXIT
 
@@ -370,13 +370,17 @@ done'
   # The victim's writer is a Deployment, so it is recreated on another node. Only the victim is schedulable while it
   # starts. It tolerates a not-ready or unreachable node for 10 s instead of 300 s, so the time measured is the
   # storage's rather than the eviction's.
+  { pvc fo-survivor spike-r3 1Gi ReadWriteOnce; pod fo-survivor fo-survivor "$writer" "$me"; } | k apply -f - >/dev/null
+  SECONDS=0
+  until k logs fo-survivor 2>/dev/null | grep -q '^W'; do
+    ((SECONDS < 600)) || { failed "Storage node killed" "slot 1's writer did not start in 10 min"; return; }
+    sleep 3
+  done
   for name in "${!ip_of[@]}"; do
     [[ $name == "$victim" ]] || k cordon "$name" >/dev/null
   done
   {
-    pvc fo-survivor spike-r3 1Gi ReadWriteOnce
     pvc fo-victim spike-r3 1Gi ReadWriteOnce
-    pod fo-survivor fo-survivor "$writer" "$me"
     cat <<EOF
 ---
 apiVersion: apps/v1
@@ -398,10 +402,10 @@ $(restart=Always pod_spec fo-victim "$writer" | sed 's/^/      /')
 EOF
   } | k apply -f - >/dev/null
   SECONDS=0
-  until k logs deploy/fo-victim 2>/dev/null | grep -q '^W' && k logs fo-survivor 2>/dev/null | grep -q '^W'; do
+  until k logs deploy/fo-victim 2>/dev/null | grep -q '^W'; do
     if ((SECONDS > 600)); then
       for name in "${!ip_of[@]}"; do k uncordon "$name" >/dev/null; done
-      failed "Storage node killed" "the writers did not start in 10 min"
+      failed "Storage node killed" "the killed node's writer did not start in 10 min"
       return
     fi
     sleep 3
@@ -554,10 +558,20 @@ ingest='head -c 256M /dev/urandom >/buf/r
 echo START
 n=0 start=$(date +%s.%N) end=$((SECONDS + 60))
 while ((SECONDS < end)); do
-  dd if=/buf/r of=/data/f bs=4M oflag=direct conv=notrunc seek=$((n % 12 * 64)) status=none
+  dd if=/buf/r of=/data/f bs=4M count=16 oflag=direct conv=notrunc seek=$((n % 48 * 16)) status=none
   n=$((n + 1))
 done
 echo "RESULT $n $start $(date +%s.%N)"'
+for ((s = 2; s <= nodes; s++)); do
+  [[ -n ${node_at[$s]:-} ]] || continue
+  node_ssh "${ip_of[${node_at[$s]}]}" 'iperf3 --server --one-off --daemon' </dev/null
+  sleep 1
+  row "TCP from slot 1's node to slot $s's, iperf3 for 10 s on the node network" "$(ssh_timeout=60 node_ssh \
+    "${ip_of[$me]}" "iperf3 --client ${ip_of[${node_at[$s]}]} --time 10 --json" </dev/null |
+    jq --raw-output '"\(.end.sum_received.bits_per_second / 8388608 | floor) MiB/s"' || echo failed)"
+done
+note "MTU on slot 1's node: NIC ${TF_VAR_mtu:-unset}, flannel.1 and pod veths $(node_ssh "${ip_of[$me]}" \
+  'cat /sys/class/net/flannel.1/mtu /sys/class/net/cali*/mtu 2>/dev/null' </dev/null | sort -u | paste -sd /)."
 for r in 1 3; do
   name=ingest-r$r
   log "ingest into a $r-replica volume"
@@ -573,7 +587,7 @@ for r in 1 3; do
   fi
   if k wait "pod/$name" --for=jsonpath='{.status.phase}'=Succeeded --timeout=5m >/dev/null 2>&1 &&
     line=$(k logs "$name" | grep '^RESULT'); then
-    row "Ingest, $r replica" "$(awk '{printf "%.0f MiB/s over %.0f s", $2 * 256 / ($4 - $3), $4 - $3}' <<<"$line"), \
+    row "Ingest, $r replica" "$(awk '{printf "%.0f MiB/s over %.0f s", $2 * 64 / ($4 - $3), $4 - $3}' <<<"$line"), \
 writer on slot 1. Slot 1's tailnet paths: $(paths)"
   else
     failed "Ingest, $r replica" "the writer did not finish ($(k get pod "$name" -o jsonpath='{.status.phase}'))"
@@ -677,8 +691,8 @@ failover
 
 note "Timing: from the first kubectl apply of $candidate to a pod's 1 MiB fsync'd write to a new 3-replica PVC. A new \
 PVC and pod every 15 s, so no attempt waits out the provisioner's back-off. Every image was pulled on every node first."
-note "Ingest: one pod on slot 1's node writes 256 MiB of random data with O_DIRECT in a loop for 60 s, over 3 GiB of a \
-4 GiB volume. WireGuard and VXLAN between GitHub runners bound it, so it compares candidates only."
+note "Ingest: one pod on slot 1's node writes 64 MiB of random data at a time, in 4 MiB O_DIRECT writes one after \
+another, in a loop for 60 s, over 3 GiB of a 4 GiB volume. WireGuard and VXLAN between GitHub runners bound it, so it compares candidates only."
 note "Node kill: systemctl poweroff --force --force on a node that is neither slot 1 nor the VIP holder. Its writer \
 tolerates a not-ready or unreachable node for 10 s, not 300 s."
 ((failures == 0))
