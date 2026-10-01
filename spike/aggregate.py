@@ -19,6 +19,7 @@ METRICS = [
     ("ingest_r1_mibs", "Ingest into a 1-replica volume (MiB/s)"),
     ("ingest_r3_mibs", "Ingest into a 3-replica volume (MiB/s)"),
     ("rwx_s", "RWX filesystem read on two nodes, after the PVC (s)"),
+    ("rwx_shared_level_s", "RWX filesystem, pods at one shared SELinux level (s)"),
     ("migrate_s", "KubeVirt live migration on an RWX block volume (s)"),
     ("kill_notready_s", "Node kill: kill to NotReady (s)"),
     ("kill_back_s", "Node kill: kill to the killed node's pod writing elsewhere (s)"),
@@ -42,7 +43,12 @@ METRICS = [
     ("avc_denials", "SELinux denials since prep, all nodes"),
 ]
 
+# A metric counts only from runs that report this status, since earlier runs measured it wrongly: the SELinux count
+# read nothing before ausearch got --input-logs (full run 36937924151).
+NEEDS = {"avc_denials": "avc"}
+
 STATUSES = [
+    ("avc", "SELinux audit log read on every node"),
     ("rwx", "RWX filesystem on two nodes"),
     ("migrate", "KubeVirt live migration"),
     ("kill", "Node kill: the pod writes again elsewhere within 10 min"),
@@ -78,7 +84,14 @@ def main():
     print("|---|" + "---|" * len(candidates))
     for key, label in METRICS:
         cells = [
-            cell([r["metrics"][key] for r in by[c] if key in r["metrics"]], len(by[c]))
+            cell(
+                [
+                    r["metrics"][key]
+                    for r in by[c]
+                    if key in r["metrics"] and NEEDS.get(key, "") in ("", *r["status"])
+                ],
+                len(by[c]),
+            )
             for c in candidates
         ]
         if any(x != "-" for x in cells):

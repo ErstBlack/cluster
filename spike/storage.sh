@@ -219,11 +219,13 @@ EOF
 
 # pod_spec <claim> <script> [node] prints a pod spec, indented to sit under a pod's or a pod template's spec:. The pod
 # mounts the claim at /data and up to 300 MiB of RAM at /buf, and sees its node's name as NODE. With ready set, the pod
-# turns Ready once the script has created that file.
+# turns Ready once the script has created that file. With selevel set, the pod runs at that SELinux level.
 pod_spec() {
-  local probe=""
+  local probe="" sel=""
   [[ -z ${ready:-} ]] || probe="    readinessProbe: {exec: {command: [test, -e, $ready]}, periodSeconds: 1}"
+  [[ -z ${selevel:-} ]] || sel="securityContext: {seLinuxOptions: {level: \"$selevel\"}}"
   cat <<EOF
+$sel
 restartPolicy: ${restart:-Never}
 nodeSelector: {${3:+kubernetes.io/hostname: $3}}
 terminationGracePeriodSeconds: 1
@@ -271,7 +273,8 @@ sample() {
   local i
   for ((i = 0; i < $1; i++)); do
     ((i == 0)) || sleep "$2"
-    sample_once || :
+    local try=0
+    until sample_once || ((++try >= 9)); do sleep 10; done
   done | python3 -c '
 import collections, statistics, sys
 rows = collections.defaultdict(list)
@@ -795,7 +798,7 @@ set -euo pipefail
 test -r /var/log/audit/audit.log || { echo "no readable /var/log/audit/audit.log"; exit 3; }
 rc=0
 # shellcheck disable=SC2046
-out=$(ausearch --raw -m AVC,USER_AVC -ts $(date -d "@$1" '+%x %T') 2>/tmp/ausearch.err) || rc=$?
+out=$(ausearch --input-logs --raw -m AVC,USER_AVC -ts $(date -d "@$1" '+%x %T') </dev/null 2>/tmp/ausearch.err) || rc=$?
 if ((rc == 1)) && grep -q '<no matches>' /tmp/ausearch.err; then
   echo "0 none"
   exit 0
@@ -1060,30 +1063,38 @@ done
 
 log "RWX filesystem on two nodes"
 other=${node_at[2]:?no slot 2}
-both='echo "$NODE" >"/data/$NODE"
-until (($(ls /data | grep -c '^node-') >= 2)); do sleep 1; done
-echo "BOTH $(ls /data | grep '^node-' | paste -sd " ")"
+# rwx_try <pod a> <pod b> <dir>: pod a on slot 1 and pod b on slot 2, on the claim rwx, each write their node's name
+# into <dir> and wait to read the other's. Prints the seconds until both read both, or fails after 5 min.
+rwx_try() {
+  local both='mkdir -p DIR
+echo "$NODE" >"DIR/$NODE"
+until (($(ls DIR | grep -c "^node-") >= 2)); do sleep 1; done
+echo "BOTH $(ls DIR | grep "^node-" | paste -sd " ")"
 sleep infinity'
-{ pvc rwx spike-rwx 1Gi ReadWriteMany; pod rwx-a rwx "$both" "$me"; pod rwx-b rwx "$both" "$other"; } | k apply -f - >/dev/null
-SECONDS=0
-until k logs rwx-a 2>/dev/null | grep -q '^BOTH' && k logs rwx-b 2>/dev/null | grep -q '^BOTH'; do
-  ((SECONDS < 300)) || break
-  sleep 3
-done
-if ((SECONDS < 300)); then
-  status rwx ok
-  metric rwx_s "$SECONDS"
-  row "RWX filesystem mounted on two nodes" "pods on slots 1 and 2 each read the other's file ${SECONDS} s after the PVC"
-else
+  both=${both//DIR//data/$3}
+  { pod "$1" rwx "$both" "$me"; pod "$2" rwx "$both" "$other"; } | k apply -f - >/dev/null
+  SECONDS=0
+  until k logs "$1" 2>/dev/null | grep -q '^BOTH' && k logs "$2" 2>/dev/null | grep -q '^BOTH'; do
+    ((SECONDS < 300)) || return 1
+    sleep 3
+  done
+  echo "$SECONDS"
+}
+# rwx_diag <pod>...: the pods' logs and events, the SELinux denials on slot 2's node, and for Ceph the filesystem and
+# its node plugins.
+rwx_diag() {
+  local p
   {
-    echo "<details><summary>RWX pods and volume</summary>"
+    echo "<details><summary>RWX pods $*</summary>"
     echo
     echo '```'
-    for p in rwx-a rwx-b; do
+    for p in "$@"; do
       echo "== $p"
-      k logs "$p" --tail=20 2>&1 || :
-      k describe pod "$p" 2>&1 | tail -n 15 || :
+      k logs "$p" --tail=5 2>&1 || :
+      k describe pod "$p" 2>&1 | sed -n '/^Events:/,$p' | tail -n 6 || :
     done
+    echo "== SELinux denials on slot 2's node in the last 10 min"
+    node_ssh "${ip_of[$other]}" 'sudo ausearch --input-logs -i -m AVC,USER_AVC -ts recent' </dev/null 2>&1 | tail -n 8 || :
     if [[ $candidate == rook-ceph ]]; then
       ceph fs status 2>&1 || :
       for p in $(k -n rook-ceph get pods -o wide --no-headers | awk -v a="$me" -v b="$other" \
@@ -1096,15 +1107,36 @@ else
     echo "</details>"
     echo
   } >>"$work/diag"
-  if [[ $candidate == rook-ceph ]]; then
-    status rwx inconclusive
-    inconclusive "RWX filesystem mounted on two nodes" "the pods did not both see both files in 5 min, cause not yet found"
+}
+pvc rwx spike-rwx 1Gi ReadWriteMany | k apply -f - >/dev/null
+if t=$(rwx_try rwx-a rwx-b a); then
+  status rwx ok
+  metric rwx_s "$t"
+  row "RWX filesystem mounted on two nodes" "pods on slots 1 and 2 each read the other's file $t s after the PVC"
+else
+  rwx_diag rwx-a rwx-b
+  why=$(k logs rwx-b --tail=1 2>&1 | cut -c 1-120)
+  # On an SELinux host, pods sharing a volume need the same SELinux level, which Kubernetes otherwise picks per pod.
+  # A second pair at one shared level shows whether that is the cause.
+  if t=$(selevel=s0:c100,c200 rwx_try rwx-c rwx-d b); then
+    status rwx shared-level
+    metric rwx_shared_level_s "$t"
+    row "RWX filesystem mounted on two nodes" "not with each pod at its own SELinux level (5 min, slot 2's pod: $why). \
+With both pods at one shared level (s0:c100,c200), each read the other's file $t s after they were created"
   else
-    status rwx failed
-    failed "RWX filesystem mounted on two nodes" "the pods did not both see both files in 5 min"
+    rwx_diag rwx-c rwx-d
+    if [[ $candidate == rook-ceph ]]; then
+      status rwx inconclusive
+      inconclusive "RWX filesystem mounted on two nodes" "the pods did not both see both files in 5 min, at their own \
+SELinux levels or at one shared level (slot 2's pod: $why)"
+    else
+      status rwx failed
+      failed "RWX filesystem mounted on two nodes" "the pods did not both see both files in 5 min, at their own SELinux \
+levels or at one shared level (slot 2's pod: $why)"
+    fi
   fi
 fi
-k delete pod rwx-a rwx-b --wait=false >/dev/null
+k delete pod rwx-a rwx-b rwx-c rwx-d --ignore-not-found --wait=false >/dev/null
 
 if [[ -n $kubevirt ]]; then
   log "KubeVirt live migration"
@@ -1176,8 +1208,10 @@ $(k get vmim mig1 -o jsonpath='{.status.migrationState.failureReason}' 2>&1)"
 fi
 
 if avc; then
+  status avc ok
   row "SELinux denials since prep (ausearch, rotated logs included)" "$(cat "$work/avc")"
 else
+  status avc failed
   failed "SELinux denials since prep (ausearch, rotated logs included)" "$(cat "$work/avc")"
 fi
 
