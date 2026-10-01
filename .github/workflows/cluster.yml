@@ -77,8 +77,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # A key outside [a-z_] or a value with a newline could set other variables, so it fails the step.
       - if: inputs.tf_vars != '{}'
-        run: jq --raw-output 'to_entries[] | "TF_VAR_\(.key)=\(.value)"' <<<"$TF_VARS" >> "$GITHUB_ENV"
+        run: |
+          jq --raw-output 'to_entries[]
+            | if (.key | test("^[a-z_]+$")) and (.value | tostring | test("\n") | not) then "TF_VAR_\(.key)=\(.value)"
+              else error("bad tf_vars entry \(.key)") end' <<<"$TF_VARS" >> "$GITHUB_ENV"
         env:
           TF_VARS: ${{ inputs.tf_vars }}
 
@@ -202,12 +206,17 @@ jobs:
 
       # The storage spike (#91) installs packages and pulls images on the nodes. Each runner NATs its own node from
       # .240 + slot, the gateway spike/storage-node.sh sets, before any node boots and runs duplicate address detection.
-      # Docker on the runner drops forwarded traffic by default. The disk samples answer whether a runner has room.
+      # Docker on the runner drops forwarded traffic by default. The nodes reach only the public internet, not the
+      # runner's private and link-local networks or Azure's metadata and DNS. The disk samples answer whether a runner
+      # has room.
       - if: inputs.spike
         run: |
           sudo ip address add "192.168.150.$((240 + SLOT))/24" dev br-cluster
           sudo sysctl --quiet --write net.ipv4.ip_forward=1
           sudo iptables --insert FORWARD 1 --in-interface br-cluster --jump ACCEPT
+          for net in 169.254.0.0/16 10.0.0.0/8 172.16.0.0/12 168.63.129.16; do
+            sudo iptables --insert FORWARD 1 --in-interface br-cluster --destination "$net" --jump DROP
+          done
           sudo iptables --insert FORWARD 1 --out-interface br-cluster --match conntrack --ctstate RELATED,ESTABLISHED \
             --jump ACCEPT
           sudo iptables --table nat --append POSTROUTING --source 192.168.150.0/24 ! --out-interface br-cluster \

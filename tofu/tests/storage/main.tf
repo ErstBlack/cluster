@@ -14,6 +14,11 @@ variable "nodes" {
 resource "terraform_data" "storage" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
-    command     = "../spike/storage.sh ${var.vip} ${var.candidate} ${var.nodes}"
+    command     = "../spike/storage.sh"
+    environment = {
+      VIP       = var.vip
+      CANDIDATE = var.candidate
+      NODES     = var.nodes
+    }
   }
 }

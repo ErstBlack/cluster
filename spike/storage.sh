@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # The storage spike (#91), never merged. tofu/tests/storage runs it on slot 1 of a cluster.yml run with spike set, once
-# the cluster is ready:
-#   spike/storage.sh <vip> <candidate> <nodes>        candidate: linstor, rook-ceph or longhorn
+# the cluster is ready, with VIP, CANDIDATE (linstor, rook-ceph or longhorn) and NODES in the environment.
 # Prepares every node with spike/storage-node.sh and installs KubeVirt, then times the candidate's install and measures
 # it. Each result goes to the job summary, also when a later one fails. Exits 1 if any measurement failed.
 # Single-quoted strings are scripts that run in pods and on nodes.
@@ -10,11 +9,11 @@ set -euo pipefail
 shopt -s inherit_errexit
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-vip=${1:?vip}
+vip=${VIP:?}
 # shellcheck source=/dev/null
 source "$here/../tofu/tests/lib.sh" storage "$vip"
-candidate=${2:?candidate}
-nodes=${3:?nodes}
+candidate=${CANDIDATE:?}
+nodes=${NODES:?}
 
 longhorn_v=v1.13.0
 rook_v=v1.20.8
@@ -413,7 +412,7 @@ EOF
   log "powering off $victim (slot ${slot_of[$victim]})"
   t_kill=$EPOCHREALTIME
   # A powered-off peer never closes the connection, so the ssh runs into its timeout.
-  (node_ssh "${ip_of[$victim]}" 'sudo systemctl poweroff --force --force' || :) &
+  (node_ssh "${ip_of[$victim]}" 'sudo systemctl poweroff --force --force' </dev/null || :) &
   while [[ -z $back ]] && ((EPOCHSECONDS - ${t_kill%.*} < 720)); do
     for p in $(k get pods -l app=fo-victim -o jsonpath='{range .items[*]}{.metadata.name}={.spec.nodeName}{"\n"}{end}'); do
       if [[ -n ${p#*=} && ${p#*=} != "$victim" ]] && k logs "${p%=*}" 2>/dev/null | grep -q '^W'; then
@@ -457,7 +456,7 @@ k version 2>&1 || :
 
 declare -A ip_of slot_of node_at
 while read -r name addr; do
-  s=$(node_ssh "$addr" 'cat /sys/class/net/*/address' | sed -n 's/^52:54:00:c1:00:0\([1-9]\)$/\1/p' | head -n 1)
+  s=$(node_ssh "$addr" 'cat /sys/class/net/*/address' </dev/null | sed -n 's/^52:54:00:c1:00:0\([1-9]\)$/\1/p' | head -n 1)
   ip_of[$name]=$addr slot_of[$name]=$s node_at[$s]=$name
 done < <(k get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}')
 me=${node_at[1]:?no node with slot 1\'s MAC}
