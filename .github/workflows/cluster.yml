@@ -275,6 +275,14 @@ jobs:
           TF_VAR_rke2_token: ${{ env.RKE2_TOKEN }}
           TEST: ${{ inputs.test }}
 
+      # spike/storage.sh's measurements, which spike-storage.yml's aggregate job reads across runs.
+      - if: always() && inputs.spike && matrix.slot == 1
+        uses: actions/upload-artifact@v7
+        with:
+          name: storage-results-${{ inputs.id }}
+          path: ${{ runner.temp }}/storage-results.json
+          if-no-files-found: ignore
+
       - if: matrix.slot != 1
         run: just tofu apply -auto-approve
         env:

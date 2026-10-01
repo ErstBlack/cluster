@@ -2,6 +2,7 @@
 # of each runs spike/storage.sh, which writes the measurements to that slot's job summary.
 # workflow_dispatch only lists workflows on the default branch, so the push trigger runs it once with the defaults and
 # registers it. After that, `gh workflow run spike-storage.yml --ref spike/storage -f candidates=... -f nodes=...`.
+# With aggregate set to run ids, it forms no cluster and prints the median table over those runs' results instead.
 name: spike-storage
 
 on:
@@ -17,6 +18,10 @@ on:
         description: Nodes per cluster without a :<nodes>, 3 to 6.
         type: number
         default: 3
+      aggregate:
+        description: Space-separated run ids whose results to aggregate. Set, it forms no cluster.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -29,6 +34,7 @@ concurrency:
 
 jobs:
   image:
+    if: inputs.aggregate == ''
     uses: ./.github/workflows/image.yml
 
   # The .debs of cluster.yml's Install libvirt step, with every dependency the runner image lacks, downloaded once
@@ -36,6 +42,7 @@ jobs:
   # 36890732575). The runner image decides which dependencies are missing, so it is in the key. PACKAGES must match
   # that step's list. A slot whose install from the cache fails uses the mirror.
   debs:
+    if: inputs.aggregate == ''
     runs-on: ubuntu-24.04
     outputs:
       key: ${{ steps.key.outputs.key }}
@@ -73,6 +80,7 @@ jobs:
   # One row per candidate. Every node gets 12 GiB and a 30 GiB data disk. LINSTOR's DRBD module is built at boot and
   # unsigned, so its nodes boot without Secure Boot.
   candidates:
+    if: inputs.aggregate == ''
     runs-on: ubuntu-24.04
     outputs:
       rows: ${{ steps.rows.outputs.rows }}
@@ -114,3 +122,24 @@ jobs:
       tf_vars: ${{ toJSON(matrix.tf_vars) }}
       spike: true
       debs_key: ${{ needs.debs.outputs.key }}
+
+  # The median, with its min-max range, of every measurement over the runs named, one column per candidate.
+  aggregate:
+    if: inputs.aggregate != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: |
+          for id in $RUNS; do
+            [[ $id =~ ^[0-9]+$ ]] || { echo "::error::not a run id: $id"; exit 1; }
+            gh run download "$id" --pattern 'storage-results-*' --dir "results/$id"
+          done
+          spike/aggregate.py results/*/*/storage-results.json | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUNS: ${{ inputs.aggregate }}
