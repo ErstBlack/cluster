@@ -200,7 +200,7 @@ install_longhorn() {
 install_rook-ceph() {
   local ex=$raw/rook/rook/$rook_v/deploy/examples s=csi.storage.k8s.io
   k apply --server-side --force-conflicts -f "$ex/crds.yaml" -f "$ex/common.yaml" -f "$ex/csi-operator.yaml" \
-    -f "$ex/operator.yaml" >/dev/null || return 1
+    >/dev/null || return 1
   local rbd=(clusterID=rook-ceph imageFormat=2 imageFeatures=layering "$s/fstype=ext4"
     "$s/provisioner-secret-name=rook-csi-rbd-provisioner" "$s/provisioner-secret-namespace=rook-ceph"
     "$s/controller-expand-secret-name=rook-csi-rbd-provisioner" "$s/controller-expand-secret-namespace=rook-ceph"
@@ -212,6 +212,9 @@ install_rook-ceph() {
     "$s/controller-publish-secret-name=rook-csi-cephfs-provisioner" "$s/controller-publish-secret-namespace=rook-ceph"
     "$s/node-stage-secret-name=rook-csi-cephfs-node" "$s/node-stage-secret-namespace=rook-ceph")
   {
+    # operator.yaml holds CSI operator resources whose CRDs csi-operator.yaml only just created.
+    curl -fsSL "$ex/operator.yaml"
+    echo "---"
     # From deploy/examples/cluster.yaml: AES CSI keys, since Rocky 10's kernel predates 7.0. One mgr, no dashboard.
     cat <<EOF
 apiVersion: ceph.rook.io/v1
