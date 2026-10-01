@@ -1,5 +1,5 @@
-# Forms a fresh cluster for each case in ci/cases.json (#72). Lane A runs the 7-node cases and lane B the 3- to 6-node
-# cases, each one at a time, so nightly peaks at 13 runners of the 20 every workflow shares.
+# Forms a fresh cluster for each case in ci/cases.json (#72). The rows run three at a time from one queue, so nightly
+# peaks at the three largest rows, 17 runners of the 20 every workflow shares.
 name: nightly
 
 # ci/systemd/cluster-nightly.timer dispatches it daily at 06:00 UTC, since GitHub's schedule started hours late.
@@ -26,39 +26,37 @@ jobs:
   image:
     uses: ./.github/workflows/image.yml
 
-  # The rows of ci/cases.json that match the inputs, split by lane.
+  # The rows of ci/cases.json that match the inputs.
   cases:
     runs-on: ubuntu-24.04
     outputs:
-      lane_a: ${{ steps.cases.outputs.lane_a }}
-      lane_b: ${{ steps.cases.outputs.lane_b }}
+      cases: ${{ steps.cases.outputs.cases }}
     steps:
       - uses: actions/checkout@v7
 
       - id: cases
         run: |
-          for lane in a b; do
-            echo "lane_$lane=$(jq --compact-output --arg case "$CASE" --arg nodes "$NODES" --arg lane "$lane" \
-              '[.[] | select(.lane == $lane and ($case == "" or .case == $case) and ($nodes == "" or (.nodes | tostring) == $nodes))]' \
-              ci/cases.json)" >> "$GITHUB_OUTPUT"
-          done
-          grep --quiet --invert-match '=\[\]$' "$GITHUB_OUTPUT" || { echo "::error::no case in ci/cases.json matches"; exit 1; }
+          cases=$(jq --compact-output --arg case "$CASE" --arg nodes "$NODES" \
+            '[.[] | select(($case == "" or .case == $case) and ($nodes == "" or (.nodes | tostring) == $nodes))]' \
+            ci/cases.json)
+          [ "$cases" != "[]" ] || { echo "::error::no case in ci/cases.json matches"; exit 1; }
+          echo "cases=$cases" >> "$GITHUB_OUTPUT"
         env:
           CASE: ${{ inputs.case }}
           NODES: ${{ inputs.nodes }}
 
-  lane-a:
+  case:
     needs: [image, cases]
-    if: needs.cases.outputs.lane_a != '[]'
+    if: needs.cases.outputs.cases != '[]'
     name: ${{ matrix.id }}
     strategy:
-      max-parallel: 1
+      max-parallel: 3
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.cases.outputs.lane_a) }}
+        include: ${{ fromJSON(needs.cases.outputs.cases) }}
     uses: ./.github/workflows/cluster.yml
     secrets: inherit
-    with: &with
+    with:
       id: ${{ matrix.id }}
       nodes: ${{ matrix.nodes }}
       control_plane_count: ${{ matrix.control_plane_count }}
@@ -67,16 +65,3 @@ jobs:
       expect_nodes: ${{ matrix.expect_nodes }}
       expect_servers: ${{ matrix.expect_servers }}
       image_key: ${{ needs.image.outputs.key }}
-
-  lane-b:
-    needs: [image, cases]
-    if: needs.cases.outputs.lane_b != '[]'
-    name: ${{ matrix.id }}
-    strategy:
-      max-parallel: 1
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.cases.outputs.lane_b) }}
-    uses: ./.github/workflows/cluster.yml
-    secrets: inherit
-    with: *with
