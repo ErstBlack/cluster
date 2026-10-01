@@ -65,7 +65,7 @@ diagnose() {
     echo '```'
     k get pods -A -o wide 2>&1 | grep -v -E ' Running | Completed |^default +first-' | head -n 40 || :
     k get pvc --no-headers 2>&1 | grep -v '^first-' || :
-    k get events -A --field-selector type=Warning --sort-by=.lastTimestamp 2>&1 | tail -n 25 | cut -c 1-300 || :
+    k get events -A --field-selector type=Warning --sort-by=.lastTimestamp 2>&1 | tail -n 25 | cut -c 1-600 || :
     if [[ $candidate == linstor ]]; then
       k -n "$ns" logs -l app.kubernetes.io/component=linstor-satellite -c drbd-module-loader --tail=15 2>&1 | head -n 40 || :
     fi
@@ -378,7 +378,7 @@ install_longhorn() {
 
 install_rook-ceph() {
   local s=csi.storage.k8s.io f
-  for f in crds common csi-operator csiaddons-crds csiaddons-rbac csiaddons-setup-controller; do
+  for f in crds common csi-operator; do
     k apply --server-side --force-conflicts -f "$work/m/$f.yaml" >/dev/null || return 1
   done
   local rbd=(clusterID=rook-ceph imageFormat=2 imageFeatures=layering "$s/fstype=ext4"
@@ -392,7 +392,12 @@ install_rook-ceph() {
     "$s/controller-publish-secret-name=rook-csi-cephfs-provisioner" "$s/controller-publish-secret-namespace=rook-ceph"
     "$s/node-stage-secret-name=rook-csi-cephfs-node" "$s/node-stage-secret-namespace=rook-ceph")
   {
-    # operator.yaml holds CSI operator resources whose CRDs csi-operator.yaml only just created.
+    # CSI-Addons' rbac.yaml needs the namespace its setup-controller.yaml creates, and operator.yaml holds CSI operator
+    # resources whose CRDs csi-operator.yaml only just created, so they go through the retrying apply.
+    for f in crds rbac setup-controller; do
+      cat "$work/m/csiaddons-$f.yaml"
+      echo "---"
+    done
     cat "$work/m/operator.yaml"
     echo "---"
     cat "$work/m/cluster.yaml"
@@ -589,7 +594,8 @@ done'
   done
   [[ -n $victim ]] || { failed "Storage node killed" "no replica holder besides slot 1 and the VIP holder: $where_reps"; return; }
   on_victim=$(k -n "$ns" get pods --field-selector "spec.nodeName=$victim" --no-headers -o custom-columns=N:.metadata.name |
-    sed -E 's/-[a-z0-9]{8,10}-[a-z0-9]{5}$//; s/-[a-z0-9]{5}$//' | sort -u | paste -sd , | sed 's/,/, /g')
+    sed -E 's/-[bcdfghjklmnpqrstvwxz2456789]{6,10}-[bcdfghjklmnpqrstvwxz2456789]{5}$//
+      s/-[bcdfghjklmnpqrstvwxz2456789]{5}$//' | sort -u | paste -sd , | sed 's/,/, /g')
   # The victim's writer is a Deployment, so it is recreated on another node. Only the victim is schedulable while it
   # starts. It tolerates a not-ready or unreachable node for 10 s instead of 300 s, so the time measured is the
   # storage's rather than the eviction's.
@@ -678,8 +684,50 @@ $(awk -v a="$t_kill" -v b="$back" 'BEGIN {printf "%.0f", b - a}') s after the ki
 ($nr$([[ -z $t_nr ]] || awk -v a="$t_nr" -v b="$back" 'BEGIN {printf ", %.0f s after NotReady", b - a}')). Recovery: $mech."
   else
     status kill failed
+    attach_diag "$(k get pvc fo-victim -o jsonpath='{.spec.volumeName}')" "fo-victim"
     failed "$head" "$io The killed node's pod had not written again 10 min after the kill ($nr). Recovery: $mech."
   fi
+}
+
+# attach_diag <pv> <label>: what holds the volume <pv> after a failed reattach, into the job summary.
+attach_diag() {
+  {
+    echo "<details><summary>Attachments of $2 ($1)</summary>"
+    echo
+    echo '```'
+    k get volumeattachments -o wide 2>&1 | grep -E "ATTACHER|$1" || :
+    case $candidate in
+      longhorn)
+        k -n longhorn-system get volumes.longhorn.io "$1" \
+          -o jsonpath='{.status.state} {.status.robustness} on {.status.currentNodeID}{"\n"}' 2>&1 || :
+        k -n longhorn-system get volumeattachments.longhorn.io "$1" -o jsonpath='{.spec}{"\n"}{.status}{"\n"}' 2>&1 || :
+        ;;
+      linstor) linstor resource list --resources "$1" 2>&1 || : ;;
+    esac
+    for p in $(k get pods -l "app=$2" -o name 2>/dev/null); do
+      k describe "$p" 2>&1 | sed -n '/^Events:/,$p' | tail -n 8 || :
+    done
+    echo '```'
+    echo "</details>"
+    echo
+  } >>"$work/diag"
+}
+
+# vm_diag: why the VM did not start or migrate, into the job summary.
+vm_diag() {
+  {
+    echo "<details><summary>KubeVirt VM and migration</summary>"
+    echo
+    echo '```'
+    k get vmim mig1 -o jsonpath='{.status}{"\n"}' 2>&1 || :
+    k get pods -l kubevirt.io=virt-launcher -o wide 2>&1 || :
+    k get events --field-selector reason=FailedScheduling -o custom-columns=OBJ:.involvedObject.name,MSG:.message 2>&1 | tail -n 5 || :
+    k get pv "$(k get pvc vm-disk -o jsonpath='{.spec.volumeName}')" -o jsonpath='PV node affinity: {.spec.nodeAffinity}{"\n"}' 2>&1 || :
+    k get nodes -L kubevirt.io/schedulable 2>&1 || :
+    echo '```'
+    echo "</details>"
+    echo
+  } >>"$work/diag"
 }
 
 # Reads `kubectl logs` of a writer and prints "<writes> <longest gap>" over [t - 5, t + 180], where t is the kill time
@@ -709,7 +757,9 @@ if ((rc == 1)) && grep -q '<no matches>' /tmp/ausearch.err; then
   exit 0
 fi
 ((rc == 0)) || { echo "ausearch failed: $(head -c 200 /tmp/ausearch.err)"; exit 3; }
-echo "$(grep -c 'avc: *denied' <<<"$out" || :) $(grep -o 'comm="[^"]*"' <<<"$out" | sort | uniq -c | sort -rn |
+denied=$(grep 'avc: *denied' <<<"$out" || :)
+[[ -n $denied ]] || { echo "0 none"; exit 0; }
+echo "$(wc -l <<<"$denied") $(grep -o 'comm="[^"]*"' <<<"$denied" | sort | uniq -c | sort -rn |
   awk 'NR <= 5 {printf "%s%s x%s", s, $2, $1; s = ", "}')"
 EOF
     ); then
@@ -1062,12 +1112,14 @@ EOF
         "from slot ${slot_of[$from]} to slot ${slot_of[$to]}, ${SECONDS} s from the migration's creation"
     else
       status migrate failed
+      vm_diag
       failed "KubeVirt VM on an RWX block volume live-migrates" "phase ${phase:-none} after ${SECONDS} s: \
 $(k get vmi vm1 -o jsonpath='{.status.conditions[?(@.type=="LiveMigratable")].message}' 2>&1) \
 $(k get vmim mig1 -o jsonpath='{.status.migrationState.failureReason}' 2>&1)"
     fi
   else
     status migrate failed
+    vm_diag
     failed "KubeVirt VM on an RWX block volume live-migrates" "the VM was not Running after 10 min"
   fi
 fi
