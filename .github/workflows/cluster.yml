@@ -310,6 +310,8 @@ jobs:
 
       - if: always() && inputs.spike
         run: |
+          # A job that failed before the spike step has no samples.
+          [[ -s $RUNNER_TEMP/disk.log ]] || exit 0
           awk 'NR == 1 {first = $2} $1 > used {used = $1} min == "" || $2 < min {min = $2}
             END {printf "Runner disk, slot %s: %d MiB free before apply, %d MiB at least, %d MiB used at most\n",
               slot, first, min, used}' slot="$SLOT" "$RUNNER_TEMP/disk.log" | tee -a "$GITHUB_STEP_SUMMARY"
