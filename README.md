@@ -94,9 +94,9 @@ first boot waits for the VIP unless the node bootstraps and writes `keepalived.c
 No node has a fixed role. Each node draws a random token and broadcasts it on UDP 9346, signed with
 the RKE2 join token. Once 60 s pass with no node appearing or dropping out (silent for 10 s), the
 `control_plane_count` (default 3) highest tokens become servers and the highest
-bootstraps the cluster. If the elected bootstrap dies before it
-starts RKE2, including within about 10 s before the decision, the others wait on the VIP forever.
-Recover with `just tofu destroy` and `just tofu apply`. The rest are agents. A node that boots later sees the `decided` beacons or the
+bootstraps the cluster. The rest are agents. If the bootstrap's beacon is silent for 5 min while a
+majority of the servers are heard and none has joined, the nodes elect again under the next epoch,
+reset RKE2 and join with that epoch's token. A node that boots later sees the `decided` beacons or the
 VIP and joins as an agent. The servers run keepalived, which holds the VIP `192.168.150.10` on a server
 whose RKE2 supervisor answers. Nodes join through `https://192.168.150.10:9345`. After a reboot the node
 keeps its role. The cloud-init needs this image. The GenericCloud default has no RKE2.
