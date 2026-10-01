@@ -50,7 +50,8 @@ diagnose() {
     echo "<details><summary>State after: $1</summary>"
     echo
     echo '```'
-    k get pods -A -o wide 2>&1 | grep -v -E ' Running | Completed |^default ' | head -n 40 || :
+    k get pods -A -o wide 2>&1 | grep -v -E ' Running | Completed |^default +first-' | head -n 40 || :
+    k get pvc --no-headers 2>&1 | grep -v '^first-' || :
     echo "SELinux denials since prep: $(avc 2>&1 || :)"
     k get events -A --field-selector type=Warning --sort-by=.lastTimestamp 2>&1 | tail -n 25 | cut -c 1-300 || :
     if [[ $candidate == linstor ]]; then
