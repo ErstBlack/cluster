@@ -16,17 +16,23 @@ METRICS = [
     ("install_healthy_s", "Install start to 3 healthy replicas (s)"),
     ("drbd_build_s", "DRBD module build and load, untimed prep (s)"),
     ("iperf_mibs", "iperf3 from slot 1's node, median over the other nodes (MiB/s)"),
-    ("ingest_r1_mibs", "Ingest into a 1-replica volume (MiB/s)"),
-    ("ingest_r3_mibs", "Ingest into a 3-replica volume (MiB/s)"),
-    ("rwx_s", "RWX filesystem read on two nodes, after the PVC (s)"),
+    ("ingest_r1_mibs", "Ingest into a 1-replica volume (MiB/s, note 2)"),
+    ("ingest_r3_mibs", "Ingest into a 3-replica volume (MiB/s, note 4)"),
+    ("rwx_s", "RWX filesystem read on two nodes, after the PVC (s, note 3)"),
     (
         "rwx_shared_level_s",
-        "RWX filesystem, a second pair at one SELinux level after a failed first (s)",
+        (
+            "RWX, a second pair at one SELinux level on a volume already mounted on both nodes (s, not comparable "
+            "to the row above, note 3)"
+        ),
     ),
     ("migrate_s", "KubeVirt live migration on an RWX block volume (s)"),
     ("kill_notready_s", "Node kill: kill to NotReady (s)"),
-    ("kill_back_s", "Node kill: kill to the killed node's pod writing elsewhere (s)"),
-    ("notready_back_s", "Node kill: NotReady to the pod writing elsewhere (s)"),
+    (
+        "kill_back_s",
+        "Node kill: kill to the killed node's pod writing elsewhere (s, note 1)",
+    ),
+    ("notready_back_s", "Node kill: NotReady to the pod writing elsewhere (s, note 1)"),
     ("survivor_gap_s", "Node kill: longest gap in slot 1's writes, t-5 to t+180 (s)"),
     ("pod_idle_cpu_m", "Storage pods idle, CPU per node (m)"),
     ("pod_idle_mib", "Storage pods idle, RAM per node (MiB)"),
@@ -51,10 +57,34 @@ METRICS = [
 NEEDS = {"avc_denials": "avc"}
 
 STATUSES = [
-    ("avc", "SELinux audit log read on every node"),
-    ("rwx", "RWX filesystem on two nodes"),
+    ("avc", "SELinux audit log read on every node (note 5)"),
+    ("rwx", "RWX filesystem on two nodes (note 3)"),
     ("migrate", "KubeVirt live migration"),
     ("kill", "Node kill: the pod writes again elsewhere within 10 min"),
+]
+
+# The qualifiers each run's rows carry, which the medians would otherwise drop (fix-round review N1-N3).
+NOTES = [
+    (
+        "Node kill, rook-ceph: Rook has no automatic trigger. The script applies the out-of-service taint at the first "
+        "NotReady poll, standing in for an admin or a tool. The taint evicts the pod at once, while linstor and longhorn "
+        "wait out the pod's 10 s not-ready toleration, so Rook's two recovery rows are about 10 s short by construction. "
+        "In production Rook's recovery also includes however long the admin or tool takes."
+    ),
+    (
+        "1-replica ingest: linstor (allowRemoteVolumeAccess=false) and longhorn (dataLocality=strict-local) wrote to the "
+        "writer's own node. rook-ceph has no local placement and spreads the data over every OSD, so its figure is a "
+        "network write."
+    ),
+    (
+        "RWX, rook-ceph: with the per-pod SELinux levels every pod gets by default, it failed in 3 of 3 runs. The pod "
+        "started first lost access once the second started, which fits per-pod relabeling on CephFS, a filesystem that "
+        "stores labels. No AVC was logged, so the cause is not confirmed. Two pods at one shared level worked in 2 of 2. "
+        "Every RWX workload on CephFS would need a shared seLinuxOptions.level. linstor and longhorn serve RWX over NFS, "
+        "which is not relabeled."
+    ),
+    "3-replica ingest is bound by the harness, with 2-4 writes of 64 MiB per run, and does not separate the candidates.",
+    "SELinux denials: only the last run read the audit log correctly, so the count rests on one run.",
 ]
 
 
@@ -107,6 +137,9 @@ def main():
             counts = {s: seen.count(s) for s in sorted(set(seen))}
             cells.append(", ".join(f"{s} {n}/{len(seen)}" for s, n in counts.items()))
         print(f"| {label} | " + " | ".join(cells) + " |")
+    print()
+    for n, note in enumerate(NOTES, 1):
+        print(f"{n}. {note}")
     print()
     print(
         "| Run | Candidate | Nodes | iperf3 median (MiB/s) | 3 healthy replicas (s) | Ingest 3 replicas (MiB/s) |"
