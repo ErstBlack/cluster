@@ -19,7 +19,10 @@ METRICS = [
     ("ingest_r1_mibs", "Ingest into a 1-replica volume (MiB/s)"),
     ("ingest_r3_mibs", "Ingest into a 3-replica volume (MiB/s)"),
     ("rwx_s", "RWX filesystem read on two nodes, after the PVC (s)"),
-    ("rwx_shared_level_s", "RWX filesystem, pods at one shared SELinux level (s)"),
+    (
+        "rwx_shared_level_s",
+        "RWX filesystem, a second pair at one SELinux level after a failed first (s)",
+    ),
     ("migrate_s", "KubeVirt live migration on an RWX block volume (s)"),
     ("kill_notready_s", "Node kill: kill to NotReady (s)"),
     ("kill_back_s", "Node kill: kill to the killed node's pod writing elsewhere (s)"),

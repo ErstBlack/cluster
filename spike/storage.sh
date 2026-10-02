@@ -1082,8 +1082,8 @@ sleep infinity'
   done
   echo "$SECONDS"
 }
-# rwx_diag <pod>...: the pods' logs and events, the SELinux denials on slot 2's node, and for Ceph the filesystem and
-# its node plugins.
+# rwx_diag <pod>...: the pods' logs and events, the SELinux denials on both nodes, and for Ceph the filesystem and its
+# node plugins.
 rwx_diag() {
   local p
   {
@@ -1095,8 +1095,13 @@ rwx_diag() {
       k logs "$p" --tail=5 2>&1 || :
       k describe pod "$p" 2>&1 | sed -n '/^Events:/,$p' | tail -n 6 || :
     done
-    echo "== SELinux denials on slot 2's node in the last 10 min"
-    node_ssh "${ip_of[$other]}" 'sudo ausearch --input-logs -i -m AVC,USER_AVC -ts recent' </dev/null 2>&1 | tail -n 8 || :
+    for p in "$me" "$other"; do
+      echo "== SELinux denials on slot ${slot_of[$p]}'s node in the last 10 min"
+      node_ssh "${ip_of[$p]}" 'sudo ausearch --input-logs -i -m AVC,USER_AVC -ts recent' </dev/null 2>&1 | tail -n 8 || :
+    done
+    # Whether the runtime labels containers at all decides whether a pod's SELinux level matters.
+    echo "== container processes' SELinux contexts on slot 2's node"
+    node_ssh "${ip_of[$other]}" 'ps -eZ | grep -E " (sleep|pause)$" | awk "{print \$1}" | sort | uniq -c' </dev/null 2>&1 || :
     if [[ $candidate == rook-ceph ]]; then
       ceph fs status 2>&1 || :
       for p in $(k -n rook-ceph get pods -o wide --no-headers | awk -v a="$me" -v b="$other" \
@@ -1117,14 +1122,16 @@ if t=$(rwx_try rwx-a rwx-b a); then
   row "RWX filesystem mounted on two nodes" "pods on slots 1 and 2 each read the other's file $t s after the PVC"
 else
   rwx_diag rwx-a rwx-b
-  why=$(k logs rwx-b --tail=1 2>&1 | cut -c 1-120)
-  # On an SELinux host, pods sharing a volume need the same SELinux level, which Kubernetes otherwise picks per pod.
-  # A second pair at one shared level shows whether that is the cause.
+  why="slot 1's pod: $(k logs rwx-a --tail=1 2>&1 | cut -c 1-100); slot 2's pod: $(k logs rwx-b --tail=1 2>&1 | cut -c 1-100)"
+  # On an SELinux host, pods sharing a volume may need one SELinux level, which Kubernetes otherwise picks per pod. A
+  # second pair at one shared level tests that, though it also runs with the volume already mounted on both nodes.
   if t=$(selevel=s0:c100,c200 rwx_try rwx-c rwx-d b); then
     status rwx shared-level
     metric rwx_shared_level_s "$t"
-    row "RWX filesystem mounted on two nodes" "not with each pod at its own SELinux level (5 min, slot 2's pod: $why). \
-With both pods at one shared level (s0:c100,c200), each read the other's file $t s after they were created"
+    row "RWX filesystem mounted on two nodes" "a first pair, each pod at its own SELinux level, did not both read both \
+files in 5 min ($why). A second pair started after it, at one shared level (s0:c100,c200), each read the other's file \
+$t s after they were created. Cause not isolated: the second pair also found the volume mounted on both nodes, and \
+the diagnosis shows the denials and container contexts"
   else
     rwx_diag rwx-c rwx-d
     if [[ $candidate == rook-ceph ]]; then
