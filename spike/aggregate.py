@@ -43,8 +43,8 @@ METRICS = [
     ("avc_denials", "SELinux denials since prep, all nodes"),
 ]
 
-# A metric counts only from runs that report this status, since earlier runs measured it wrongly: the SELinux count
-# read nothing before ausearch got --input-logs (full run 36937924151).
+# A metric counts only from runs whose status for it is ok, since earlier runs measured it wrongly: the SELinux count
+# read nothing before ausearch got --input-logs (full run 36937924151), then failed on its exit code (36941226361).
 NEEDS = {"avc_denials": "avc"}
 
 STATUSES = [
@@ -88,7 +88,8 @@ def main():
                 [
                     r["metrics"][key]
                     for r in by[c]
-                    if key in r["metrics"] and NEEDS.get(key, "") in ("", *r["status"])
+                    if key in r["metrics"]
+                    and (key not in NEEDS or r["status"].get(NEEDS[key]) == "ok")
                 ],
                 len(by[c]),
             )

@@ -799,11 +799,13 @@ test -r /var/log/audit/audit.log || { echo "no readable /var/log/audit/audit.log
 rc=0
 # shellcheck disable=SC2046
 out=$(ausearch --input-logs --raw -m AVC,USER_AVC -ts $(date -d "@$1" '+%x %T') </dev/null 2>/tmp/ausearch.err) || rc=$?
-if ((rc == 1)) && grep -q '<no matches>' /tmp/ausearch.err; then
+# ausearch exits 1 both for no match and for an error. With --input-logs a no match prints nothing (measured in a
+# Rocky 10 container), so only a message marks an error.
+if ((rc == 1)) && { [[ ! -s /tmp/ausearch.err ]] || grep -q '<no matches>' /tmp/ausearch.err; }; then
   echo "0 none"
   exit 0
 fi
-((rc == 0)) || { echo "ausearch failed: $(head -c 200 /tmp/ausearch.err)"; exit 3; }
+((rc == 0)) || { echo "ausearch failed with $rc: $(head -c 200 /tmp/ausearch.err)"; exit 3; }
 denied=$(grep 'avc: *denied' <<<"$out" || :)
 [[ -n $denied ]] || { echo "0 none"; exit 0; }
 echo "$(wc -l <<<"$denied") $(sed -nE 's/.*(comm|exe)="([^"]*)".*/\2/p' <<<"$denied" | sort | uniq -c | sort -rn |
