@@ -27,7 +27,7 @@ Hardware is the floor. The disk image and the site config come from outside the 
 - Anything that needs direct access to a node belongs in the cluster layer.
 - Parts inside a layer still meet at contracts, so each one stays replaceable.
 - Logging, health, trust and secrets, and time belong to no layer yet. Each layer handles its own share.
-- Storage, networking, and loading data on and off are not yet placed.
+- The areas under "Deferred and open" are not yet placed.
 - No layer reaches past its neighbour.
 
 ## Runs
