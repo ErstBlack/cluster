@@ -13,6 +13,23 @@ The system turns independent machines at an edge site into one cluster that runs
 - The Kubernetes API is a hard line. Anything above it sees only the API. Exceptions are made case by case, where a benefit is shown.
 - Logging, health, trust and secrets, and time cut across every part. Their implementation is open, but the design keeps them cheap to add.
 
+## Layers
+
+These layers are a tentative starting point, not a fixed design. Layers may be added, merged or removed as the design develops.
+
+Hardware is the floor. The disk image and the site config come from outside the layers, between runs.
+
+1. Node: one machine on its own. It hides hardware differences, the OS, disk encryption and how the node finds its address. It runs on the hardware from the disk image. It offers an address, encrypted scratch, hardware virtualization, a report of its hardware, and the site config on disk.
+2. Cluster: formation (the election, the stable address and admission), Kubernetes, and the VM add-on. It hides roles, which node bootstraps, the stable address, join credentials, which Kubernetes distribution runs, and how VMs run. It meets the node layer at files on the node's disk. It offers the Kubernetes API, including VM types, with the run's declared workloads loaded and each node's hardware visible.
+3. Platform services: whatever applies the declared workloads, and any UI for changes during a run. It hides how declarations, compose files included, become running workloads. It sees only the Kubernetes API.
+
+- Each layer below the Kubernetes API reads its own part of the site config. Anything above the API gets its part through the API.
+- Anything that needs direct access to a node belongs in the cluster layer.
+- Parts inside a layer still meet at contracts, so each one stays replaceable.
+- Logging, health, trust and secrets, and time belong to no layer yet. Each layer handles its own share.
+- Storage, networking, and loading data on and off are not yet placed.
+- No layer reaches past its neighbour.
+
 ## Runs
 
 - Each run forms a fresh cluster from the nodes that are powered on. Nothing about the cluster survives shutdown.
@@ -62,7 +79,7 @@ The system turns independent machines at an edge site into one cluster that runs
 
 - Containers run as cluster workloads. VMs run through a VM add-on on the same API.
 - Compose files are an input format that is converted when delivered. They are never run as-is on a node. A translation for Docker-specific assumptions may come later.
-- The platform services are the cluster, the VM add-on, and whatever applies the declared workloads. There is no third-party management UI.
+- The platform runs only the cluster, the VM add-on, and whatever applies the declared workloads. There is no third-party management UI.
 
 ## Non-goals
 
@@ -80,4 +97,4 @@ The system turns independent machines at an edge site into one cluster that runs
 - Loading data onto nodes when a run starts and off them when it ends.
 - Where container images, charts and VM images come from for each run.
 - Restarting a failed node's VMs on another node.
-- The list of responsibilities (#30), then the layer layout (#31).
+- The list of responsibilities (#30), each placed in one of the layers above.
