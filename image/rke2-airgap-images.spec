@@ -1,4 +1,4 @@
-# Built by airgap.sh. Ships RKE2's containerd root with the airgap-images.txt images already imported and unpacked.
+# Built by airgap.sh. Ships RKE2's containerd root with the RKE2 airgap images already imported and unpacked.
 # %post extracts it once, at image build, and deletes the tarball. The state includes rke2-runtime's bin and charts
 # under /var/lib/rancher/rke2/data. The tarball is already zstd, so payload compression stays at a fast level.
 %global _binary_payload w3T.zstdio
@@ -15,7 +15,7 @@ Requires(post): tar zstd
 
 %description
 The containerd content store, meta.db and overlayfs snapshots under /var/lib/rancher/rke2/agent/containerd,
-with overlay whiteouts and xattrs, for the RKE2 release named in airgap-images.txt.
+with overlay whiteouts and xattrs, for the RKE2 release the rke2-server pin in blueprint.toml names.
 
 %install
 install -D -m 0600 %{SOURCE0} %{buildroot}%{state}

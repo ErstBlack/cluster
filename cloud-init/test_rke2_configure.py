@@ -6,7 +6,7 @@ from unittest import mock
 
 import rke2_configure
 import rke2_elect
-from rke2_configure import CHECK, config_yaml, keepalived_conf, units
+from rke2_configure import CHECK, config_yaml, keepalived_conf
 
 ENV = {"RKE2_TOKEN": "secret", "VIP": "192.168.150.10", "NODE_IP": "192.168.150.11"}
 
@@ -55,14 +55,6 @@ class KeepalivedConf(unittest.TestCase):
         self.assertIn("track_script {\n    chk_rke2\n  }", conf)
 
 
-class Units(unittest.TestCase):
-    def test_server_starts_rke2_server_and_keepalived(self):
-        self.assertEqual(units("server"), ["rke2-server", "keepalived"])
-
-    def test_agent_starts_only_rke2_agent(self):
-        self.assertEqual(units("agent"), ["rke2-agent"])
-
-
 class Main(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory()
@@ -107,7 +99,18 @@ class Main(unittest.TestCase):
 
     def assert_started(self, role):
         self.run_.assert_called_once_with(
-            ["systemctl", "enable", "--now", "--no-block", *units(role)], check=True
+            [
+                "systemctl",
+                "enable",
+                "--now",
+                "--no-block",
+                *(
+                    ["rke2-server", "keepalived"]
+                    if role == "server"
+                    else ["rke2-agent"]
+                ),
+            ],
+            check=True,
         )
 
     def test_no_role_exits_nonzero_and_writes_nothing(self):

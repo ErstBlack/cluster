@@ -24,8 +24,7 @@ resource "terraform_data" "mtu" {
       mtu=$(vip_ssh cat "/sys/class/net/$dev/mtu")
       rc=0
       [ "$mtu" = "${var.mtu}" ] || { echo "site NIC $dev has MTU $mtu, expected ${var.mtu}" >&2; rc=1; }
-      ips=$(vip_ssh 'sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes \
-        -o jsonpath="{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}"')
+      ips=$(node_ips)
       peers=0
       for ip in $ips; do
         # Skip the guest's own address.

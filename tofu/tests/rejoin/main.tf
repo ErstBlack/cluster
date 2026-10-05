@@ -13,7 +13,6 @@ resource "terraform_data" "rejoin" {
     command     = <<-EOT
       source ${path.module}/../lib.sh rejoin ${var.vip}
       log "waiting for the old VIP holder to return, via ${var.vip}"
-      k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
       # Fails if var.vip answers from a server other than $holder. An empty answer is a failed read, not a move.
       stays() {
         local now

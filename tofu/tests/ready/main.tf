@@ -23,8 +23,7 @@ resource "terraform_data" "ready" {
       # Prints what the server holding var.vip sees, and succeeds once the cluster is ready. kubectl's errors are
       # dropped because the printed counts already say what is missing.
       ssh_ok() {
-        ssh_timeout=60 vip_ssh \
-          'k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
+        ssh_timeout=60 vip_ssh "k='$k'"'
            hostname | grep -qx "node-[0-9a-f]\{10\}" && named=yes || named=no
            nodes=$($k get nodes -o name 2>/dev/null | wc -l)
            servers=$($k get nodes -l node-role.kubernetes.io/control-plane=true -o name 2>/dev/null | wc -l)

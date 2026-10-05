@@ -12,8 +12,7 @@ resource "terraform_data" "dropped_peer" {
     command     = <<-EOT
       source ${path.module}/../lib.sh dropped_peer ${var.vip}
       log "searching every node's rke2-elect journal for a dropped silent peer, via ${var.vip}"
-      ips=$(node_ssh ${var.vip} 'sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes \
-        -o jsonpath="{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}"')
+      ips=$(node_ips)
       [ -n "$ips" ] || { echo "no InternalIP from kubectl on ${var.vip}" >&2; exit 1; }
       for ip in $ips; do
         line=$(node_ssh "$ip" sudo journalctl --unit rke2-elect --no-pager | grep --max-count 1 'dropped silent peer')

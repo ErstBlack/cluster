@@ -11,7 +11,6 @@ resource "terraform_data" "agent_crash" {
     command     = <<-EOT
       source ${path.module}/../lib.sh agent_crash ${var.vip}
       log "picking an agent to crash, via ${var.vip}"
-      k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
       read -r agent ip <<<"$(node_ssh "$vip" "$k get nodes -l node-role.kubernetes.io/control-plane!=true -o jsonpath=\"{.items[0].metadata.name} {.items[0].status.addresses[?(@.type==\\\"InternalIP\\\")].address}\"")"
       [ -n "$ip" ] || { echo "no agent from kubectl on $vip" >&2; exit 1; }
       log "forcing a poweroff of agent $agent at $ip"

@@ -47,7 +47,6 @@ jobs:
 
   case:
     needs: [image, cases]
-    if: needs.cases.outputs.cases != '[]'
     name: ${{ matrix.id }}
     strategy:
       max-parallel: 3
