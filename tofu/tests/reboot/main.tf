@@ -11,7 +11,6 @@ resource "terraform_data" "reboot" {
     command     = <<-EOT
       source ${path.module}/../lib.sh reboot ${var.vip}
       log "picking an agent and a server that does not hold ${var.vip}"
-      k="sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml"
       # Prints "<kubelet boot ID> <Ready status> <InternalIP>" of node $1.
       info() {
         node_ssh ${var.vip} "$k get node $1 -o jsonpath=\"{.status.nodeInfo.bootID} {.status.conditions[?(@.type==\\\"Ready\\\")].status} {.status.addresses[?(@.type==\\\"InternalIP\\\")].address}\""

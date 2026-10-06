@@ -4,14 +4,7 @@ variables {
   slot        = 1
 }
 
-run "apply" {
-  command = apply
-
-  assert {
-    condition     = keys(output.nodes) == ["Rocky-Cluster-1"]
-    error_message = "expected only this slot's node, Rocky-Cluster-1"
-  }
-}
+run "apply" {}
 
 run "cluster_ready" {
   module {

@@ -13,8 +13,7 @@ resource "terraform_data" "addr_conflict" {
       source ${path.module}/../lib.sh addr_conflict ${var.vip}
       log "checking every node's InternalIP and node-addr journal, via ${var.vip}"
       net=$${vip%.*}
-      ips=$(node_ssh "$vip" 'sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes \
-        -o jsonpath="{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}"')
+      ips=$(node_ips)
       [ -n "$ips" ] || { echo "no InternalIP from kubectl on $vip" >&2; exit 1; }
       rc=0
       logged=""

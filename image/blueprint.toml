@@ -31,6 +31,16 @@ name = "qemu-guest-agent"
 name = "keepalived"
 version = "2.2.8-9.el10"
 
+# From output/airgap-repo, which airgap.sh builds and build.sh adds with --extra-repo.
+[[packages]]
+name = "rke2-airgap-images"
+
 # rke2-server, rke2-agent and keepalived stay disabled: rke2-configure writes their config and starts them.
 [customizations.services]
 enabled = ["qemu-guest-agent"]
+
+# The seeded state unpacks to about 11 GB (4.6 GB content, 6.2 GB snapshots) on top of the OS, which overflows
+# the qcow2 type's default size. This stays under tofu's default disk_gib of 40.
+[[customizations.filesystem]]
+mountpoint = "/"
+minsize = "16 GiB"

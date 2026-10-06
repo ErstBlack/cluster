@@ -1,3 +1,0 @@
-# Images pre-imported into the golden image by airgap.sh, pinned by tag.
-# The RKE2 release must match the rke2-server pin in blueprint.toml.
-https://github.com/rancher/rke2/releases/download/v1.36.4%2Brke2r1/rke2-images.linux-amd64.tar.zst

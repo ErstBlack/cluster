@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Package the images in airgap-images.txt, pre-imported, as the RPM rke2-airgap-images in output/airgap-repo.
+# Package the RKE2 airgap images, pre-imported, as the RPM rke2-airgap-images in output/airgap-repo.
 #
-# Fetch: a https:// line is the RKE2 airgap tarball. Its release must match the rke2-server pin in blueprint.toml, and a
-# download is checked against the release's sha256sum-amd64.txt. Only missing files are fetched.
-# Seed: RKE2's own containerd, from the rke2-runtime image in that tarball, imports every file into namespace k8s.io
+# Fetch: the airgap tarball of the RKE2 release the rke2-server pin in blueprint.toml names, when it is missing from the
+# cache. A download is checked against the release's sha256sum-amd64.txt.
+# Seed: RKE2's own containerd, from the rke2-runtime image in that tarball, imports the tarball into namespace k8s.io
 # of a root at /var/lib/rancher/rke2/agent/containerd with the overlayfs snapshotter. It sets the pinned labels RKE2's
 # importer sets (k3s preloadFile/labelImages). The content store, meta.db and unpacked snapshots are tarred with their
 # overlay whiteouts and xattrs. The state is tied to this RKE2 release's containerd, so an RKE2 bump means a reseed.
@@ -16,28 +16,21 @@ cache=/srv/rocky-cluster/images/agent-images
 img=docker.io/rockylinux/rockylinux:10@sha256:827d37bc128288ccf160ee318bb3cb92d591164cb217e92f8bc61e3982ae1834
 
 mkdir -p "$cache" output
-files=()
-while read -r e; do
-  [[ -n $e ]] || continue
-  if [[ $e == https://* ]]; then
-    f=${e##*/} tag=${e%/*}
-    tag=${tag##*/}
-    pin=$(grep -A1 '^name = "rke2-server"' blueprint.toml | sed -n 's/^version = "\(.*\)"/\1/p')
-    [[ $tag == "v${pin/\~/%2B}" ]] || { echo "RKE2 $tag in airgap-images.txt does not match rke2-server $pin" >&2; exit 1; }
-    if [[ ! -e $cache/$f ]]; then
-      curl -fL -o "$cache/$f.part" "$e"
-      echo "$(curl -fsSL "${e%/*}/sha256sum-amd64.txt" | awk -v f="$f" '$2 == f {print $1}')  $cache/$f.part" | sha256sum -c
-      mv "$cache/$f.part" "$cache/$f"
-    fi
-    rke2=$f runtime=rancher/rke2-runtime:${tag/\%2B/-}
-  fi
-  files+=("$f")
-done < <(sed 's/#.*//' airgap-images.txt)
+pin=$(grep -A1 '^name = "rke2-server"' blueprint.toml | sed -n 's/^version = "\(.*\)"/\1/p')
+tag=v${pin/\~/%2B}
+url=https://github.com/rancher/rke2/releases/download/$tag
+rke2="rke2-images.linux-amd64.tar.zst"
+runtime=rancher/rke2-runtime:${tag/\%2B/-}
+if [[ ! -e $cache/$rke2 ]]; then
+  curl -fL -o "$cache/$rke2.part" "$url/$rke2"
+  echo "$(curl -fsSL "$url/sha256sum-amd64.txt" | awk -v f="$rke2" '$2 == f {print $1}')  $cache/$rke2.part" | sha256sum -c
+  mv "$cache/$rke2.part" "$cache/$rke2"
+fi
 
 rpm=(output/airgap-repo/noarch/rke2-airgap-images-*.rpm)
 fresh=1
 [[ -e ${rpm[0]} && -e output/airgap-repo/repodata/repomd.xml ]] || fresh=
-for f in airgap-images.txt airgap.sh rke2-airgap-images.spec "${files[@]/#/$cache/}"; do
+for f in airgap.sh blueprint.toml rke2-airgap-images.spec "$cache/$rke2"; do
   [[ ${rpm[0]} -nt $f ]] || fresh=
 done
 if [[ -n $fresh ]]; then
@@ -49,7 +42,7 @@ sudo rm -rf output/airgap output/airgap-repo
 mkdir -p output/airgap/root output/airgap-repo
 sudo podman run --rm -i --privileged -v "$cache":/cache:ro -v "$PWD":/src:ro -v "$PWD/output":/out \
   -v "$PWD/output/airgap/root":/var/lib/rancher/rke2/agent/containerd \
-  -e RKE2="$rke2" -e RUNTIME="$runtime" -e FILES="${files[*]}" -e OWNER="$(id -u):$(id -g)" "$img" bash -s <<'EOF'
+  -e RKE2="$rke2" -e RUNTIME="$runtime" -e OWNER="$(id -u):$(id -g)" "$img" bash -s <<'EOF'
 set -euo pipefail
 dnf -y -q --setopt=install_weak_deps=False install rpm-build createrepo_c zstd jq
 
@@ -75,14 +68,11 @@ containerd --root "$root" --state /run/containerd >/out/airgap/containerd.log 2>
 pid=$!
 for _ in {1..120}; do ctr version >/dev/null 2>&1 && break; sleep 1; done
 ctr version >/dev/null
-read -ra files <<<"$FILES"
-for f in "${files[@]}"; do
-  echo "importing $f"
-  # RKE2 imports all platforms but skips missing content, and the tarball's indexes carry only amd64 blobs. ctr has
-  # no skip, so it imports the host platform: the same content ends up present.
-  zstd -dcf "/cache/$f" | ctr -n k8s.io images import --local \
-    --label io.cattle.rke2.pinned=pinned --label io.cri-containerd.pinned=pinned -
-done
+echo "importing $RKE2"
+# RKE2 imports all platforms but skips missing content, and the tarball's indexes carry only amd64 blobs. ctr has no
+# skip, so it imports the host platform: the same content ends up present.
+zstd -dcf "/cache/$RKE2" | ctr -n k8s.io images import --local \
+  --label io.cattle.rke2.pinned=pinned --label io.cri-containerd.pinned=pinned -
 ctr -n k8s.io images ls -q > /out/airgap/images.txt
 echo "$(wc -l < /out/airgap/images.txt) images in k8s.io"
 kill "$pid"

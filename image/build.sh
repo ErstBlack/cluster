@@ -14,9 +14,8 @@ store=/var/cache/image-builder/store
 
 mkdir -p output
 ./airgap.sh
-cat blueprint.toml airgap.toml > output/blueprint.toml
 sudo mkdir -p "$store"
-sudo podman run --rm --privileged -v "$PWD/output/blueprint.toml":/blueprint.toml:ro \
+sudo podman run --rm --privileged -v "$PWD/blueprint.toml":/blueprint.toml:ro \
   -v "$PWD/output/airgap-repo":/airgap-repo:ro -v "$PWD/rocky-10.2.json":/repos/rocky-10.2.json:ro \
   -v "$PWD/output":/output -v "$store":"$store" "$img" \
   --force-repo-dir /repos --extra-repo file:///airgap-repo build qcow2 --distro rocky-10.2 --blueprint /blueprint.toml \

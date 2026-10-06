@@ -60,7 +60,6 @@ jobs:
       TF_VAR_slot: ${{ matrix.slot }}
       # The bridge ci/overlay.sh creates.
       TF_VAR_bridge: br-cluster
-      TF_VAR_nodes: ${{ inputs.nodes }}
       TF_VAR_control_plane_count: ${{ inputs.control_plane_count }}
       # The counts the case's tofu test expects. Undeclared in tofu/variables.tf, so apply ignores them.
       TF_VAR_expect_nodes: ${{ inputs.expect_nodes }}
@@ -252,20 +251,11 @@ jobs:
       - if: always()
         run: cat "$RUNNER_TEMP/case.log" 2>/dev/null || true
 
-      # Why the job ended: the last runner samples, any kernel OOM kill, and the runner's own log of cancellation and
-      # shutdown requests. The job log is public and the runner's log is not masked, so no text of it is printed: only
-      # each line's [time level component] and a fixed label. The runner logs "Force kill process on cancellation" for
-      # every step, so those lines are dropped.
+      # Why the job ended: the last runner samples and any kernel OOM kill.
       - if: always()
         run: |
           tail -n 30 "$RUNNER_TEMP/health.log" 2>/dev/null || true
           sudo dmesg | grep --ignore-case --extended-regexp 'out of memory|killed process' || true
-          sudo find /home/runner /opt -maxdepth 5 -path '*_diag*' -name 'Worker_*.log' 2>/dev/null |
-            xargs --no-run-if-empty sudo grep --no-filename --ignore-case --extended-regexp 'cancel|shutdown' |
-            grep --invert-match 'Force kill process on cancellation' |
-            awk 'match($0, /^\[[A-Za-z0-9 :.-]*\]/) {
-                print substr($0, RSTART, RLENGTH), (tolower($0) ~ /shutdown/ ? "shutdown" : "cancel") }' |
-            tail -n 20 || true
 
       # An ephemeral node that logs out is deleted at once and leaves its peers' lists.
       - if: always()

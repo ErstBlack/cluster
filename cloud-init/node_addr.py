@@ -87,28 +87,7 @@ def assign(iface, ip, prefix, gateway, dns):
     """Save and activate a static profile. False if activation fails, as it does on an address conflict.
     Its priority beats cloud-init's DHCP profile (120), so NetworkManager brings it up on every boot."""
     nmcli("con", "delete", PROFILE)  # left by an interrupted boot
-    args = [
-        "con",
-        "add",
-        "type",
-        "ethernet",
-        "con-name",
-        PROFILE,
-        "ifname",
-        iface,
-        "ipv4.method",
-        "manual",
-        "ipv4.addresses",
-        f"{ip}/{prefix}",
-        "ipv4.may-fail",
-        "no",
-        "ipv4.dad-timeout",
-        "3000",
-        "connection.autoconnect-priority",
-        "999",
-        "ipv6.method",
-        "disabled",
-    ]  # IPv4 only for now. #15 notes IPv6 discovery to revisit.
+    args = f"con add type ethernet con-name {PROFILE} ifname {iface} ipv4.method manual ipv4.addresses {ip}/{prefix} ipv4.may-fail no ipv4.dad-timeout 3000 connection.autoconnect-priority 999 ipv6.method disabled".split()  # IPv4 only for now. #15 notes IPv6 discovery to revisit.
     args += ["ipv4.gateway", gateway] if gateway else ["ipv4.routes", "0.0.0.0/0"]
     if dns:
         args += ["ipv4.dns", dns]

@@ -89,10 +89,6 @@ def config_yaml(env, role, bootstrap, epoch=0):
     return "\n".join(lines) + "\n"
 
 
-def units(role):
-    return ["rke2-server", "keepalived"] if role == "server" else ["rke2-agent"]
-
-
 def reset():
     """Stop RKE2 and remove the cluster state of an earlier epoch. agent/containerd and data hold the
     preloaded airgap images and stay. Every step is idempotent."""
@@ -152,7 +148,14 @@ def main():
         write(CONFIG, config_yaml(env, role, bootstrap, epoch), 0o600)
     # --no-block: rke2 blocks until it is ready.
     subprocess.run(
-        ["systemctl", "enable", "--now", "--no-block", *units(role)], check=True
+        [
+            "systemctl",
+            "enable",
+            "--now",
+            "--no-block",
+            *(["rke2-server", "keepalived"] if role == "server" else ["rke2-agent"]),
+        ],
+        check=True,
     )
     print(f"started {role}{' (bootstrap)' if bootstrap else ''}", flush=True)
 
